@@ -1,0 +1,66 @@
+/* Simple linker script for the ucore kernel.
+   See the GNU ld 'info' manual ("info ld") to learn the syntax. */
+
+OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
+OUTPUT_ARCH(i386)
+ENTRY(kern_entry)
+
+SECTIONS {
+    /* Load the kernel at this address: "." means the current address */
+    . = 0xC0100000;
+
+    .text : {
+        *(.text .stub .text.* .gnu.linkonce.t.*)
+    }
+
+    PROVIDE(etext = .); /* Define the 'etext' symbol to this value */
+
+    .rodata : {
+        *(.rodata .rodata.* .gnu.linkonce.r.*)
+    }
+
+    /* Include debugging information in kernel memory */
+    .stab : {
+        PROVIDE(__STAB_BEGIN__ = .);
+        *(.stab);
+        PROVIDE(__STAB_END__ = .);
+        BYTE(0)     /* Force the linker to allocate space
+                   for this section */
+    }
+
+    .stabstr : {
+        PROVIDE(__STABSTR_BEGIN__ = .);
+        *(.stabstr);
+        PROVIDE(__STABSTR_END__ = .);
+        BYTE(0)     /* Force the linker to allocate space
+                   for this section */
+    }
+
+    /* Adjust the address for the data segment to the next page */
+    . = ALIGN(0x1000);
+
+    /* The data segment */
+    .data : {
+        /*
+         * Modern GCC/Clang place initialized objects containing pointers
+         * (for example function-pointer tables and self-referential list
+         * heads) in .data.rel.* or .data.*.  They must be before edata;
+         * kern_init clears [edata, end) as the kernel BSS.
+         */
+         *(.data .data.* .data.rel.* .data.rel.ro.* .sdata .sdata.* .gnu.linkonce.d.*)
+        *(.got .got.*)
+    }
+
+    PROVIDE(edata = .);
+
+    .bss : {
+        *(.bss .bss.* .sbss .sbss.*)
+        *(COMMON)
+    }
+
+    PROVIDE(end = .);
+
+    /DISCARD/ : {
+        *(.eh_frame .note.GNU-stack)
+    }
+}

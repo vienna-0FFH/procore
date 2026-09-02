@@ -1,0 +1,19 @@
+# Native and legacy build outputs
+obj/
+bin/
+mksfs/
+sign/
+target/native/obj/
+target/native/bin/
+target/native/disk0/
+
+# Generated diagnostics and images
+*.img
+*.out
+*.asm
+*.sym
+*.d
+*.o
+*.log
+target/native/*.txt
+target/native/reference-kernel.elf
