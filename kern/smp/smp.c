@@ -8,6 +8,7 @@
 #include <memlayout.h>
 #include <pmm.h>
 #include <smp.h>
+#include <trap.h>
 
 #define SMP_TRAMPOLINE_PA             0x00007000
 #define SMP_LAPIC_DEFAULT_PA          0xFEE00000
@@ -114,6 +115,13 @@ smp_lapic_read(uint32_t offset) {
 static void
 smp_lapic_write(uint32_t offset, uint32_t value) {
     *smp_lapic_reg(offset) = value;
+}
+
+void
+smp_lapic_eoi(void) {
+    if (smp_enabled) {
+        smp_lapic_write(LAPIC_EOI, 0);
+    }
 }
 
 static inline uint64_t
@@ -293,6 +301,13 @@ smp_discover_cpuid(void) {
     return 0;
 }
 
+static bool
+smp_cpu_has_apic(void) {
+    uint32_t result[4];
+    smp_cpuid(1, 0, result);
+    return (result[3] & (1U << 9)) != 0;
+}
+
 static int
 smp_map_lapic(void) {
     pte_t *ptep = get_pte(boot_pgdir, SMP_LAPIC_VA, 1);
@@ -400,11 +415,17 @@ smp_boot_ap(uint32_t cpu_index) {
 
 void
 smp_ap_entry(uint32_t cpu_index) {
+    /* The trampoline's temporary GDT has the same flat segments as the
+     * kernel GDT.  Install the shared IDT before declaring the AP online so
+     * an unexpected interrupt cannot use the reset-time null IDT. */
+    idt_init();
     if (cpu_index < SMP_MAX_CPUS) {
         smp_online[cpu_index] = 1;
     }
     for (;;) {
-        asm volatile ("pause");
+        /* AP scheduling is deliberately not enabled until per-CPU process
+         * state exists.  HLT keeps the validated AP bootstrap inexpensive. */
+        asm volatile ("hlt");
     }
 }
 
@@ -424,7 +445,11 @@ smp_init(void) {
     /* Some firmware tables describe only the BSP.  CPUID still gives the
      * actual logical CPU count exposed by the machine, so use it when the
      * table did not find an AP. */
-    if (ret != 0 || smp_ncpu <= 1) {
+    if (!smp_cpu_has_apic()) {
+        smp_ncpu = 1;
+        ret = -E_NA_DEV;
+    }
+    else if (ret != 0 || smp_ncpu <= 1) {
         if (ret != 0) {
             smp_ncpu = 1;
             smp_lapic_pa = SMP_LAPIC_DEFAULT_PA;
@@ -507,4 +532,20 @@ smp_cpu_online_count(void) {
 bool
 smp_is_enabled(void) {
     return smp_enabled;
+}
+
+int
+smp_current_cpu(void) {
+    uint8_t apic_id;
+    int i;
+    if (!smp_enabled) {
+        return 0;
+    }
+    apic_id = (uint8_t)(smp_lapic_read(LAPIC_ID) >> 24);
+    for (i = 0; i < smp_ncpu; i++) {
+        if (smp_apic_ids[i] == apic_id) {
+            return i;
+        }
+    }
+    return -1;
 }
