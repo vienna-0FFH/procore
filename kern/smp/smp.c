@@ -8,46 +8,9 @@
 #include <memlayout.h>
 #include <pmm.h>
 #include <smp.h>
+#include <smp_config.h>
+#include <smp_arch.h>
 #include <trap.h>
-
-#define SMP_TRAMPOLINE_PA             0x00007000
-#define SMP_LAPIC_DEFAULT_PA          0xFEE00000
-#define SMP_LAPIC_VA                  0xFEE00000
-
-#define MSR_IA32_APIC_BASE            0x0000001B
-#define APIC_BASE_ENABLE              (1U << 11)
-#define APIC_BASE_X2APIC              (1U << 10)
-
-#define LAPIC_ID                      0x020
-#define LAPIC_TPR                     0x080
-#define LAPIC_EOI                     0x0B0
-#define LAPIC_SVR                     0x0F0
-#define LAPIC_ESR                     0x280
-#define LAPIC_ICR_LOW                 0x300
-#define LAPIC_ICR_HIGH                0x310
-#define LAPIC_LVT_TIMER               0x320
-#define LAPIC_LVT_LINT0               0x350
-#define LAPIC_LVT_LINT1               0x360
-
-#define APIC_SVR_ENABLE               (1U << 8)
-#define APIC_LVT_MASKED               (1U << 16)
-#define APIC_LVT_NMI                  (4U << 8)
-#define APIC_ICR_DELIVERY_STATUS      (1U << 12)
-#define APIC_ICR_LEVEL_ASSERT         (1U << 14)
-#define APIC_ICR_TRIGGER_LEVEL        (1U << 15)
-#define APIC_DM_INIT                  (5U << 8)
-#define APIC_DM_STARTUP              (6U << 8)
-#define APIC_SPURIOUS_VECTOR          0xFF
-
-#define MP_FLOATING_SIGNATURE          "_MP_"
-#define MP_CONFIG_SIGNATURE            "PCMP"
-#define MP_ENTRY_PROCESSOR             0
-#define MP_ENTRY_BUS                   1
-#define MP_ENTRY_IOAPIC                2
-#define MP_ENTRY_INTSRC                3
-#define MP_ENTRY_LOCAL_INTSRC          4
-#define MP_CPU_ENABLED                 0x01
-#define MP_CPU_BOOTSTRAP               0x02
 
 struct mp_floating_pointer {
     char signature[4];
@@ -91,10 +54,13 @@ static int smp_ncpu = 1;
 static volatile uint32_t smp_online[SMP_MAX_CPUS];
 static struct Page *smp_ap_stacks[SMP_MAX_CPUS];
 static uintptr_t smp_lapic_pa = SMP_LAPIC_DEFAULT_PA;
+static uintptr_t smp_trampoline_pa = SMP_TRAMPOLINE_PA;
 static bool smp_enabled;
 
 extern char smp_trampoline_start[];
 extern char smp_trampoline_end[];
+extern char smp_trampoline_pm[];
+extern char smp_trampoline_pm_farptr[];
 extern char smp_trampoline_gdt[];
 extern char smp_trampoline_gdt_desc[];
 extern char smp_trampoline_cr3[];
@@ -190,6 +156,35 @@ smp_find_mpfp(void) {
         return mpfp;
     }
     return smp_scan_range(0xF0000, 0x10000);
+}
+
+static int
+smp_select_trampoline(void) {
+    uintptr_t image_size = (uintptr_t)(smp_trampoline_end - smp_trampoline_start);
+    uint16_t base_memory_kb = *(volatile uint16_t *)KADDR(SMP_BDA_BASE_MEMORY_PA);
+    uintptr_t candidate;
+    uintptr_t conventional_top = (uintptr_t)base_memory_kb * 1024;
+
+    /* The BIOS data area gives the top of conventional memory, below EBDA. */
+    if (base_memory_kb >= 2) {
+        candidate = ROUNDDOWN(conventional_top, PGSIZE);
+        candidate -= PGSIZE;
+        if (candidate >= PGSIZE && candidate + image_size <= SMP_SIPI_MAX_PA &&
+            candidate + image_size <= conventional_top &&
+            candidate + PGSIZE <= ((uintptr_t)npage << PGSHIFT)) {
+            smp_trampoline_pa = candidate;
+            return 0;
+        }
+    }
+
+    /* Keep a compile-time fallback for firmware without a valid BDA value. */
+    if (SMP_TRAMPOLINE_PA >= PGSIZE &&
+        SMP_TRAMPOLINE_PA + image_size <= SMP_SIPI_MAX_PA &&
+        SMP_TRAMPOLINE_PA + PGSIZE <= ((uintptr_t)npage << PGSHIFT)) {
+        smp_trampoline_pa = SMP_TRAMPOLINE_PA;
+        return 0;
+    }
+    return -E_NO_MEM;
 }
 
 static int
@@ -323,7 +318,7 @@ smp_map_lapic(void) {
 static int
 smp_lapic_wait_icr(void) {
     uint32_t i;
-    for (i = 0; i < 1000000; i++) {
+    for (i = 0; i < SMP_LAPIC_WAIT_LOOPS; i++) {
         if ((smp_lapic_read(LAPIC_ICR_LOW) & APIC_ICR_DELIVERY_STATUS) == 0) {
             return 0;
         }
@@ -344,7 +339,7 @@ smp_lapic_send_ipi(uint8_t apic_id, uint32_t command) {
 static void
 smp_delay(void) {
     uint32_t i;
-    for (i = 0; i < 100000; i++) {
+    for (i = 0; i < SMP_AP_DELAY_LOOPS; i++) {
         asm volatile ("pause");
     }
 }
@@ -352,6 +347,7 @@ smp_delay(void) {
 static int
 smp_prepare_trampoline(uint32_t cpu_index, uintptr_t stack_top) {
     uintptr_t image_size = (uintptr_t)(smp_trampoline_end - smp_trampoline_start);
+    uintptr_t pm_farptr_offset = (uintptr_t)(smp_trampoline_pm_farptr - smp_trampoline_start);
     uintptr_t gdt_desc_offset = (uintptr_t)(smp_trampoline_gdt_desc - smp_trampoline_start);
     uintptr_t gdt_offset;
     char *image;
@@ -359,8 +355,11 @@ smp_prepare_trampoline(uint32_t cpu_index, uintptr_t stack_top) {
     if (image_size > PGSIZE) {
         return -E_TOO_BIG;
     }
-    image = KADDR(SMP_TRAMPOLINE_PA);
+    image = KADDR(smp_trampoline_pa);
     memcpy(image, smp_trampoline_start, image_size);
+
+    *(uint32_t *)(image + pm_farptr_offset) = smp_trampoline_pa +
+        (uintptr_t)(smp_trampoline_pm - smp_trampoline_start);
 
     *(uint32_t *)(image + (smp_trampoline_cr3 - smp_trampoline_start)) = boot_cr3;
     *(uint32_t *)(image + (smp_trampoline_stack - smp_trampoline_start)) = stack_top;
@@ -369,7 +368,7 @@ smp_prepare_trampoline(uint32_t cpu_index, uintptr_t stack_top) {
     *(uint32_t *)(image + (smp_trampoline_cpu - smp_trampoline_start)) = cpu_index;
 
     gdt_offset = (uintptr_t)(smp_trampoline_gdt_desc - smp_trampoline_start);
-    *(uint32_t *)(image + gdt_desc_offset + 2) = SMP_TRAMPOLINE_PA + gdt_offset +
+    *(uint32_t *)(image + gdt_desc_offset + 2) = smp_trampoline_pa + gdt_offset +
         (uintptr_t)(smp_trampoline_gdt - smp_trampoline_gdt_desc);
     return 0;
 }
@@ -392,18 +391,19 @@ smp_boot_ap(uint32_t cpu_index) {
     }
     smp_delay();
     ret = smp_lapic_send_ipi(smp_apic_ids[cpu_index],
-                             APIC_DM_STARTUP | (SMP_TRAMPOLINE_PA >> 12));
+                             APIC_DM_STARTUP | (smp_trampoline_pa >> PGSHIFT));
     if (ret != 0) {
         return ret;
     }
     smp_delay();
     ret = smp_lapic_send_ipi(smp_apic_ids[cpu_index],
-                             APIC_DM_STARTUP | (SMP_TRAMPOLINE_PA >> 12));
+                             APIC_DM_STARTUP | (smp_trampoline_pa >> PGSHIFT));
     if (ret != 0) {
         return ret;
     }
 
-    for (timeout = 0; smp_online[cpu_index] == 0 && timeout < 50000000;
+    for (timeout = 0; smp_online[cpu_index] == 0 &&
+         timeout < SMP_AP_STARTUP_TIMEOUT;
          timeout++) {
         asm volatile ("pause");
     }
@@ -473,11 +473,20 @@ smp_init(void) {
         return;
     }
 
+    ret = smp_select_trampoline();
+    if (ret != 0) {
+        cprintf("smp: no usable low-memory trampoline (%d), using 1 CPU\n", ret);
+        smp_ncpu = 1;
+        return;
+    }
+
     {
         uint64_t apic_base = smp_rdmsr(MSR_IA32_APIC_BASE);
         smp_wrmsr(MSR_IA32_APIC_BASE,
-                  (apic_base & ~0xFFFFF000ULL & ~(uint64_t)APIC_BASE_X2APIC) |
-                  (smp_lapic_pa & 0xFFFFF000) | APIC_BASE_ENABLE);
+                  (apic_base & ~((uint64_t)PGSIZE - 1) &
+                   ~(uint64_t)APIC_BASE_X2APIC) |
+                  (smp_lapic_pa & ~((uintptr_t)PGSIZE - 1)) |
+                  APIC_BASE_ENABLE);
     }
     smp_lapic_write(LAPIC_TPR, 0);
     smp_lapic_write(LAPIC_SVR, APIC_SVR_ENABLE | APIC_SPURIOUS_VECTOR);

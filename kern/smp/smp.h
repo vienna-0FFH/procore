@@ -2,8 +2,7 @@
 #define __KERN_SMP_SMP_H__
 
 #include <defs.h>
-
-#define SMP_MAX_CPUS            8
+#include <smp_config.h>
 
 void smp_init(void);
 int smp_cpu_count(void);

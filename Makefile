@@ -183,6 +183,8 @@ KSRCDIR		+= kern/init \
 			   kern/fs/sfs
 
 KCFLAGS		+= $(addprefix -I,$(KINCLUDE))
+# Optional platform overrides, e.g. SMP_DEFS+=-DSMP_MAX_CPUS=4.
+KCFLAGS		+= $(SMP_DEFS)
 
 $(call add_files_cc,$(call listf_cc,$(KSRCDIR)),kernel,$(KCFLAGS))
 

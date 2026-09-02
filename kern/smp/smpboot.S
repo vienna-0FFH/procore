@@ -11,14 +11,14 @@
 .code16
 .globl smp_trampoline_start
 .globl smp_trampoline_end
+.globl smp_trampoline_pm
+.globl smp_trampoline_pm_farptr
 .globl smp_trampoline_gdt_desc
 .globl smp_trampoline_gdt
 .globl smp_trampoline_cr3
 .globl smp_trampoline_stack
 .globl smp_trampoline_entry
 .globl smp_trampoline_cpu
-
-.set SMP_TRAMPOLINE_BASE, 0x7000
 
 smp_trampoline_start:
     cli
@@ -38,9 +38,10 @@ smp_trampoline_start:
     movl %cr0, %eax
     orl $CR0_PE, %eax
     movl %eax, %cr0
-    /* The protected-mode code segment has base zero, so the far-jump
-     * offset must be the physical address where this image was copied. */
-    ljmp $KERNEL_CS, $(SMP_TRAMPOLINE_BASE + smp_trampoline_pm - smp_trampoline_start)
+    /* The protected-mode target is patched to the selected low-memory page
+     * by the BSP before sending the startup IPI. */
+    movw $(smp_trampoline_pm_farptr - smp_trampoline_start), %si
+    ljmpl *(%si)
 
 .code32
 smp_trampoline_pm:
@@ -66,6 +67,11 @@ smp_trampoline_pm:
 smp_trampoline_hang:
     pause
     jmp smp_trampoline_hang
+
+.align 4
+smp_trampoline_pm_farptr:
+    .long 0
+    .word KERNEL_CS
 
 .align 4
 smp_trampoline_gdt:
