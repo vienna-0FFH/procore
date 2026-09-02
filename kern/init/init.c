@@ -13,6 +13,7 @@
 #include <swap.h>
 #include <proc.h>
 #include <fs.h>
+#include <smp.h>
 #include <virt.h>
 
 int kern_init(void) __attribute__((noreturn));
@@ -39,6 +40,8 @@ kern_init(void) {
 
     pic_init();                 // init interrupt controller
     idt_init();                 // init interrupt descriptor table
+
+    smp_init();                 // discover and bootstrap application processors
 
     vmm_init();                 // init virtual memory management
     sched_init();               // init scheduler

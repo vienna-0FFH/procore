@@ -16,4 +16,5 @@ target/native/disk0/
 *.o
 *.log
 target/native/*.txt
+target/native/*.bin
 target/native/reference-kernel.elf
