@@ -62,6 +62,7 @@ static uintptr_t smp_trampoline_pa = SMP_TRAMPOLINE_PA;
 static volatile uint32_t smp_scheduler_started;
 static bool smp_enabled;
 static spinlock_t smp_ipi_lock;
+static struct proc_struct *smp_switch_pending[SMP_MAX_CPUS];
 
 /* Each CPU needs a private TSS because ring transitions use its kernel stack. */
 static struct taskstate smp_tss[SMP_MAX_CPUS];
@@ -127,6 +128,25 @@ smp_set_idle(int cpu, struct proc_struct *proc) {
     if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
         smp_idle_procs[cpu] = proc;
     }
+}
+
+void
+smp_switch_begin(struct proc_struct *proc) {
+    int cpu = smp_current_cpu();
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_switch_pending[cpu] = proc;
+    }
+}
+
+struct proc_struct *
+smp_switch_take(void) {
+    int cpu = smp_current_cpu();
+    struct proc_struct *proc = NULL;
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        proc = smp_switch_pending[cpu];
+        smp_switch_pending[cpu] = NULL;
+    }
+    return proc;
 }
 
 static void

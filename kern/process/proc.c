@@ -223,26 +223,27 @@ proc_run(struct proc_struct *proc) {
         struct proc_struct *prev = current, *next = proc;
         local_intr_save(intr_flag);
         {
+            smp_switch_begin(prev);
             current = proc;
             load_esp0(next->kstack + KSTACKSIZE);
             lcr3(next->cr3);
             switch_to(&(prev->context), &(next->context));
+            proc_switch_complete();
         }
         local_intr_restore(intr_flag);
     }
 }
 
 void
-proc_switch_out_context(struct context *context) {
-    struct proc_struct *proc;
+proc_switch_complete(void) {
+    struct proc_struct *proc = smp_switch_take();
     struct proc_struct *parent = NULL;
     bool requeue = 0;
     bool intr_flag;
 
-    if (context == NULL) {
+    if (proc == NULL) {
         return;
     }
-    proc = to_struct(context, struct proc_struct, context);
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);
     proc->on_cpu = 0;
@@ -271,6 +272,7 @@ proc_switch_out_context(struct context *context) {
 //       after switch_to, the current proc will execute here.
 static void
 forkret(void) {
+    proc_switch_complete();
     bool intr_flag;
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);

@@ -1,6 +1,5 @@
 .text
 .globl switch_to
-.extern proc_switch_out_context
 switch_to:                      # switch_to(from, to)
 
     # save from's registers
@@ -14,26 +13,17 @@ switch_to:                      # switch_to(from, to)
     movl %edi, 24(%eax)
     movl %ebp, 28(%eax)
 
-    # Change to the incoming stack before marking the outgoing context
-    # quiescent.  The helper receives the saved context pointer.
-    movl %eax, %esi             # esi = from context
-    movl 4(%esp), %edi          # edi = to context
-    movl 4(%edi), %edx
-    movl %edx, %esp
-    pushl %esi
-    call proc_switch_out_context
-    addl $4, %esp
-
     # restore to's registers
-    movl 28(%edi), %ebp
-    movl 20(%edi), %esi
-    movl 16(%edi), %edx
-    movl 12(%edi), %ecx
-    movl 24(%edi), %eax
-    movl 8(%edi), %ebx
-    movl 4(%edi), %esp
+    movl 4(%esp), %eax          # not 8(%esp): popped return address already
+                                # eax now points to to
+    movl 28(%eax), %ebp
+    movl 24(%eax), %edi
+    movl 20(%eax), %esi
+    movl 16(%eax), %edx
+    movl 12(%eax), %ecx
+    movl 8(%eax), %ebx
+    movl 4(%eax), %esp
 
-    pushl 0(%edi)
-    movl %eax, %edi
+    pushl 0(%eax)               # push eip
 
     ret

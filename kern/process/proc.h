@@ -94,7 +94,7 @@ extern struct proc_struct *initproc;
 
 void proc_init(void);
 void proc_run(struct proc_struct *proc);
-void proc_switch_out_context(struct context *context);
+void proc_switch_complete(void);
 int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
 
 char *set_proc_name(struct proc_struct *proc, const char *name);

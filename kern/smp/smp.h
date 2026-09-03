@@ -20,6 +20,8 @@ void smp_set_esp0(uintptr_t esp0);
 void smp_start_cpus(void);
 void smp_send_reschedule(void);
 void smp_send_reschedule_cpu(int cpu_index);
+void smp_switch_begin(struct proc_struct *proc);
+struct proc_struct *smp_switch_take(void);
 
 /* Entered by the real-mode AP trampoline after paging is enabled. */
 void smp_ap_entry(uint32_t cpu_index) __attribute__((noreturn));
