@@ -15,6 +15,7 @@
 #include <fs.h>
 #include <vfs.h>
 #include <sysfile.h>
+#include <smp.h>
 
 /* ------------- process/thread mechanism design&implementation -------------
 (an simplified Linux process/thread mechanism )
@@ -72,13 +73,9 @@ list_entry_t proc_list;
 // has list for process set based on pid
 static list_entry_t hash_list[HASH_LIST_SIZE];
 
-// idle proc
-struct proc_struct *idleproc = NULL;
 // init proc
 struct proc_struct *initproc = NULL;
-// current proc
-struct proc_struct *current = NULL;
-
+spinlock_t proc_lock;
 static int nr_process = 0;
 
 void kernel_thread_entry(void);
@@ -128,6 +125,8 @@ alloc_proc(void) {
         proc->wait_state = 0;
         proc->cptr = proc->optr = proc->yptr = NULL;
         proc->rq = NULL;
+        proc->cpu = 0;
+        proc->on_cpu = 0;
         list_init(&(proc->run_link));
         proc->time_slice = 0;
         proc->lab6_run_pool.left = proc->lab6_run_pool.right = proc->lab6_run_pool.parent = NULL;
@@ -162,7 +161,6 @@ set_links(struct proc_struct *proc) {
         proc->optr->yptr = proc;
     }
     proc->parent->cptr = proc;
-    nr_process ++;
 }
 
 // remove_links - clean the relation links of process
@@ -234,11 +232,51 @@ proc_run(struct proc_struct *proc) {
     }
 }
 
+void
+proc_switch_out_context(struct context *context) {
+    struct proc_struct *proc;
+    struct proc_struct *parent = NULL;
+    bool requeue = 0;
+    bool intr_flag;
+
+    if (context == NULL) {
+        return;
+    }
+    proc = to_struct(context, struct proc_struct, context);
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    proc->on_cpu = 0;
+    if (proc->state == PROC_RUNNABLE && proc->rq == NULL) {
+        /* A wakeup may have raced with the context switch while on_cpu was
+         * still set.  Re-check after publishing the hand-off so the task is
+         * not left runnable but absent from every run queue. */
+        requeue = 1;
+    }
+    if (proc->state == PROC_ZOMBIE && proc->parent != NULL &&
+        proc->parent->wait_state == WT_CHILD) {
+        parent = proc->parent;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    if (parent != NULL) {
+        wakeup_proc(parent);
+    }
+    if (requeue) {
+        wakeup_proc(proc);
+    }
+}
+
 // forkret -- the first kernel entry point of a new thread/process
 // NOTE: the addr of forkret is setted in copy_thread function
 //       after switch_to, the current proc will execute here.
 static void
 forkret(void) {
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    current->on_cpu = 1;
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
     forkrets(current->tf);
 }
 
@@ -257,16 +295,24 @@ unhash_proc(struct proc_struct *proc) {
 // find_proc - find proc frome proc hash_list according to pid
 struct proc_struct *
 find_proc(int pid) {
+    struct proc_struct *found = NULL;
+    bool intr_flag;
+
     if (0 < pid && pid < MAX_PID) {
+        local_intr_save(intr_flag);
+        spin_lock(&proc_lock);
         list_entry_t *list = hash_list + pid_hashfn(pid), *le = list;
         while ((le = list_next(le)) != list) {
             struct proc_struct *proc = le2proc(le, hash_link);
             if (proc->pid == pid) {
-                return proc;
+                found = proc;
+                break;
             }
         }
+        spin_unlock(&proc_lock);
+        local_intr_restore(intr_flag);
     }
-    return NULL;
+    return found;
 }
 
 // kernel_thread - create a kernel thread using "fn" function
@@ -420,6 +466,7 @@ put_fs(struct proc_struct *proc) {
         if (files_count_dec(filesp) == 0) {
             files_destroy(filesp);
         }
+        proc->filesp = NULL;
     }
 }
 
@@ -432,7 +479,18 @@ int
 do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     int ret = -E_NO_FREE_PROC;
     struct proc_struct *proc;
-    if (nr_process >= MAX_PROCESS) {
+    bool reserved = 0;
+    bool intr_flag;
+
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    if (nr_process < MAX_PROCESS) {
+        nr_process++;
+        reserved = 1;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    if (!reserved) {
         goto fork_out;
     }
     ret = -E_NO_MEM;
@@ -471,9 +529,16 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
 	*    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
     */
     if ((proc = alloc_proc()) == NULL) {
+        local_intr_save(intr_flag);
+        spin_lock(&proc_lock);
+        nr_process--;
+        spin_unlock(&proc_lock);
+        local_intr_restore(intr_flag);
         goto fork_out;
     }
 
+    /* The parent remains stable while the child inherits its address space
+     * and file table.  Their internal locks serialize shared-object users. */
     proc->parent = current;
     assert(current->wait_state == 0);
 
@@ -484,17 +549,17 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
         goto bad_fork_cleanup_kstack;
     }
     if (copy_mm(clone_flags, proc) != 0) {
-        goto bad_fork_cleanup_kstack;
+        goto bad_fork_cleanup_fs;
     }
     copy_thread(proc, stack, tf);
 
-    bool intr_flag;
     local_intr_save(intr_flag);
     {
+        spin_lock(&proc_lock);
         proc->pid = get_pid();
         hash_proc(proc);
         set_links(proc);
-
+        spin_unlock(&proc_lock);
     }
     local_intr_restore(intr_flag);
 
@@ -510,6 +575,11 @@ bad_fork_cleanup_kstack:
     put_kstack(proc);
 bad_fork_cleanup_proc:
     kfree(proc);
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    nr_process--;
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
     goto fork_out;
 }
 
@@ -519,6 +589,11 @@ bad_fork_cleanup_proc:
 //   3. call scheduler to switch to other process
 int
 do_exit(int error_code) {
+    struct proc_struct *parent;
+    struct proc_struct *wake_parent = NULL;
+    bool wake_init = 0;
+    bool intr_flag;
+
     if (current == idleproc) {
         panic("idleproc exit.\n");
     }
@@ -537,35 +612,38 @@ do_exit(int error_code) {
         current->mm = NULL;
     }
     put_fs(current); //for core
+
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
     current->state = PROC_ZOMBIE;
     current->exit_code = error_code;
-    
-    bool intr_flag;
-    struct proc_struct *proc;
-    local_intr_save(intr_flag);
-    {
-        proc = current->parent;
-        if (proc->wait_state == WT_CHILD) {
-            wakeup_proc(proc);
+    parent = current->parent;
+    if (parent != NULL && parent->wait_state == WT_CHILD) {
+        wake_parent = parent;
+    }
+    while (current->cptr != NULL) {
+        struct proc_struct *proc = current->cptr;
+        current->cptr = proc->optr;
+
+        proc->yptr = NULL;
+        if ((proc->optr = initproc->cptr) != NULL) {
+            initproc->cptr->yptr = proc;
         }
-        while (current->cptr != NULL) {
-            proc = current->cptr;
-            current->cptr = proc->optr;
-    
-            proc->yptr = NULL;
-            if ((proc->optr = initproc->cptr) != NULL) {
-                initproc->cptr->yptr = proc;
-            }
-            proc->parent = initproc;
-            initproc->cptr = proc;
-            if (proc->state == PROC_ZOMBIE) {
-                if (initproc->wait_state == WT_CHILD) {
-                    wakeup_proc(initproc);
-                }
-            }
+        proc->parent = initproc;
+        initproc->cptr = proc;
+        if (proc->state == PROC_ZOMBIE && initproc->wait_state == WT_CHILD) {
+            wake_init = 1;
         }
     }
+    spin_unlock(&proc_lock);
     local_intr_restore(intr_flag);
+
+    if (wake_parent != NULL) {
+        wakeup_proc(wake_parent);
+    }
+    if (wake_init) {
+        wakeup_proc(initproc);
+    }
     
     schedule();
     panic("do_exit will not return!! %d.\n", current->pid);
@@ -878,22 +956,36 @@ do_yield(void) {
 int
 do_wait(int pid, int *code_store) {
     struct mm_struct *mm = current->mm;
+    struct proc_struct *proc;
+    bool intr_flag;
+    bool haskid;
+
     if (code_store != NULL) {
         if (!user_mem_check(mm, (uintptr_t)code_store, sizeof(int), 1)) {
             return -E_INVAL;
         }
     }
 
-    struct proc_struct *proc;
-    bool intr_flag, haskid;
 repeat:
     haskid = 0;
+    proc = NULL;
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
     if (pid != 0) {
-        proc = find_proc(pid);
+        if (0 < pid && pid < MAX_PID) {
+            list_entry_t *list = hash_list + pid_hashfn(pid), *le = list;
+            while ((le = list_next(le)) != list) {
+                struct proc_struct *candidate = le2proc(le, hash_link);
+                if (candidate->pid == pid) {
+                    proc = candidate;
+                    break;
+                }
+            }
+        }
         if (proc != NULL && proc->parent == current) {
             haskid = 1;
-            if (proc->state == PROC_ZOMBIE) {
-                goto found;
+            if (proc->state == PROC_ZOMBIE && !proc->on_cpu) {
+                goto found_locked;
             }
         }
     }
@@ -901,14 +993,18 @@ repeat:
         proc = current->cptr;
         for (; proc != NULL; proc = proc->optr) {
             haskid = 1;
-            if (proc->state == PROC_ZOMBIE) {
-                goto found;
+            if (proc->state == PROC_ZOMBIE && !proc->on_cpu) {
+                goto found_locked;
             }
         }
     }
     if (haskid) {
         current->state = PROC_SLEEPING;
         current->wait_state = WT_CHILD;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    if (haskid) {
         schedule();
         if (current->flags & PF_EXITING) {
             do_exit(-E_KILLED);
@@ -917,19 +1013,17 @@ repeat:
     }
     return -E_BAD_PROC;
 
-found:
+found_locked:
     if (proc == idleproc || proc == initproc) {
         panic("wait idleproc or initproc.\n");
     }
+    unhash_proc(proc);
+    remove_links(proc);
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
     if (code_store != NULL) {
         *code_store = proc->exit_code;
     }
-    local_intr_save(intr_flag);
-    {
-        unhash_proc(proc);
-        remove_links(proc);
-    }
-    local_intr_restore(intr_flag);
     put_kstack(proc);
     kfree(proc);
     return 0;
@@ -939,17 +1033,48 @@ found:
 int
 do_kill(int pid) {
     struct proc_struct *proc;
-    if ((proc = find_proc(pid)) != NULL) {
+    bool wake = 0;
+    int ret = -E_INVAL;
+    bool intr_flag;
+
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    proc = NULL;
+    if (0 < pid && pid < MAX_PID) {
+        list_entry_t *list = hash_list + pid_hashfn(pid), *le = list;
+        while ((le = list_next(le)) != list) {
+            struct proc_struct *candidate = le2proc(le, hash_link);
+            if (candidate->pid == pid) {
+                proc = candidate;
+                break;
+            }
+        }
+    }
+    if (proc != NULL) {
         if (!(proc->flags & PF_EXITING)) {
             proc->flags |= PF_EXITING;
-            if (proc->wait_state & WT_INTERRUPTED) {
-                wakeup_proc(proc);
+            wake = (proc->wait_state & WT_INTERRUPTED) != 0;
+            if (wake && proc->state != PROC_ZOMBIE) {
+                /* Publish the runnable state while proc_lock is held.  This
+                 * prevents another CPU from reaping the process before the
+                 * scheduler has a chance to enqueue it below. */
+                proc->state = PROC_RUNNABLE;
+                proc->wait_state = 0;
             }
-            return 0;
+            ret = 0;
         }
-        return -E_KILLED;
+        else {
+            ret = -E_KILLED;
+        }
     }
-    return -E_INVAL;
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+
+    if (ret == 0 && wake) {
+        wakeup_proc(proc);
+    }
+    return ret;
+
 }
 
 // kernel_execve - do SYS_exec syscall to exec a user program called by user_main kernel_thread
@@ -1012,7 +1137,7 @@ init_main(void *arg) {
     if (pid <= 0) {
         panic("create user_main failed.\n");
     }
- extern void check_sync(void);
+    extern void check_sync(void);
     check_sync();                // check philosopher sync problem
 
     while (do_wait(0, NULL) == 0) {
@@ -1037,7 +1162,9 @@ init_main(void *arg) {
 void
 proc_init(void) {
     int i;
+    struct proc_struct *ap_idle;
 
+    spin_init(&proc_lock);
     list_init(&proc_list);
     for (i = 0; i < HASH_LIST_SIZE; i ++) {
         list_init(hash_list + i);
@@ -1051,6 +1178,7 @@ proc_init(void) {
     idleproc->state = PROC_RUNNABLE;
     idleproc->kstack = (uintptr_t)bootstack;
     idleproc->need_resched = 1;
+    idleproc->on_cpu = 1;
     
     if ((idleproc->filesp = files_create()) == NULL) {
         panic("create filesp (idleproc) failed.\n");
@@ -1061,6 +1189,21 @@ proc_init(void) {
     nr_process ++;
 
     current = idleproc;
+    smp_set_idle(0, idleproc);
+    smp_set_current(0, idleproc);
+
+    for (i = 1; i < smp_cpu_count(); i++) {
+        if ((ap_idle = alloc_proc()) == NULL || setup_kstack(ap_idle) != 0) {
+            panic("cannot alloc idle process for CPU %d.\n", i);
+        }
+        ap_idle->pid = 0;
+        ap_idle->state = PROC_RUNNABLE;
+        ap_idle->need_resched = 1;
+        ap_idle->cpu = i;
+        set_proc_name(ap_idle, "idle");
+        smp_set_idle(i, ap_idle);
+        smp_set_current(i, ap_idle);
+    }
 
     int pid = kernel_thread(init_main, NULL, 0);
     if (pid <= 0) {
@@ -1077,11 +1220,7 @@ proc_init(void) {
 // cpu_idle - at the end of kern_init, the first kernel thread idleproc will do below works
 void
 cpu_idle(void) {
-    while (1) {
-        if (current->need_resched) {
-            schedule();
-        }
-    }
+    sched_cpu_idle();
 }
 
 //Set process scheduling priority (bigger value will get more CPU time) 
@@ -1103,8 +1242,10 @@ do_sleep(unsigned int time) {
     bool intr_flag;
     local_intr_save(intr_flag);
     timer_t __timer, *timer = timer_init(&__timer, current, time);
+    spin_lock(&proc_lock);
     current->state = PROC_SLEEPING;
     current->wait_state = WT_TIMER;
+    spin_unlock(&proc_lock);
     add_timer(timer);
     local_intr_restore(intr_flag);
 

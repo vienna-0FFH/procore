@@ -4,6 +4,7 @@
 #include <defs.h>
 #include <list.h>
 #include <skew_heap.h>
+#include <spinlock.h>
 
 struct proc_struct;
 
@@ -55,11 +56,15 @@ struct run_queue {
     list_entry_t run_list;
     unsigned int proc_num;
     int max_time_slice;
+    int cpu_id;
+    spinlock_t lock;
     // process scheduler state
     skew_heap_entry_t *lab6_run_pool;
 };
 
 void sched_init(void);
+void sched_cpu_idle(void) __attribute__((noreturn));
+void sched_tick(void);
 void wakeup_proc(struct proc_struct *proc);
 void schedule(void);
 void add_timer(timer_t *timer);
@@ -67,4 +72,3 @@ void del_timer(timer_t *timer);
 void run_timer_list(void);
 
 #endif /* !__KERN_SCHEDULE_SCHED_H__ */
-

@@ -25,7 +25,7 @@ struct file;
 struct files_struct {
     struct inode *pwd;      // inode of present working directory
     struct file *fd_array;  // opened files array
-    int files_count;        // the number of opened files
+    volatile int files_count; // the number of processes sharing this table
     semaphore_t files_sem;  // lock protect sem
 };
 
@@ -47,15 +47,12 @@ files_count(struct files_struct *filesp) {
 
 static inline int
 files_count_inc(struct files_struct *filesp) {
-    filesp->files_count += 1;
-    return filesp->files_count;
+    return atomic_inc_return(&filesp->files_count);
 }
 
 static inline int
 files_count_dec(struct files_struct *filesp) {
-    filesp->files_count -= 1;
-    return filesp->files_count;
+    return atomic_dec_return(&filesp->files_count);
 }
 
 #endif /* !__KERN_FS_FS_H__ */
-

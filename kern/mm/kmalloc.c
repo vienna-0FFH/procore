@@ -40,8 +40,8 @@
 
 
 //some helper
-#define spin_lock_irqsave(l, f) local_intr_save(f)
-#define spin_unlock_irqrestore(l, f) local_intr_restore(f)
+#define spin_lock_irqsave(l, f) do { (f) = __intr_save(); spin_lock(l); } while (0)
+#define spin_unlock_irqrestore(l, f) do { spin_unlock(l); __intr_restore(f); } while (0)
 typedef unsigned int gfp_t;
 #ifndef PAGE_SIZE
 #define PAGE_SIZE PGSIZE
@@ -76,6 +76,8 @@ typedef struct bigblock bigblock_t;
 static slob_t arena = { .next = &arena, .units = 1 };
 static slob_t *slobfree = &arena;
 static bigblock_t *bigblocks;
+static spinlock_t slob_lock;
+static spinlock_t block_lock;
 
 
 static void* __slob_get_free_pages(gfp_t gfp, int order)
@@ -88,7 +90,7 @@ static void* __slob_get_free_pages(gfp_t gfp, int order)
 
 #define __slob_get_free_page(gfp) __slob_get_free_pages(gfp, 0)
 
-static inline void __slob_free_pages(unsigned long kva, int order)
+static inline void __slob_free_pages(void *kva, int order)
 {
   free_pages(kva2page(kva), 1 << order);
 }
@@ -130,7 +132,7 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align)
 			}
 
 			slobfree = prev;
-			spin_unlock_irqrestore(&slob_lock, flags);
+                spin_unlock_irqrestore(&slob_lock, flags);
 			return cur;
 		}
 		if (cur == slobfree) {
@@ -153,6 +155,7 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align)
 static void slob_free(void *block, int size)
 {
 	slob_t *cur, *b = (slob_t *)block;
+	slob_t *release;
 	unsigned long flags;
 
 	if (!block)
@@ -176,10 +179,32 @@ static void slob_free(void *block, int size)
 	if (cur + cur->units == b) {
 		cur->units += b->units;
 		cur->next = b->next;
+		release = cur;
 	} else
-		cur->next = b;
+		cur->next = b, release = b;
 
 	slobfree = cur;
+	if (size != PAGE_SIZE && release != &arena &&
+	    ((uintptr_t)release & (PAGE_SIZE - 1)) == 0 &&
+	    (((size_t)release->units * SLOB_UNIT) & (PAGE_SIZE - 1)) == 0) {
+        slob_t *prev = &arena;
+        size_t pages = (size_t)release->units * SLOB_UNIT / PAGE_SIZE;
+        /* Find the predecessor from the permanent arena sentinel.  Never
+         * unlink a self-linked/corrupt node: doing so would leave slobfree
+         * pointing into a page that is about to be returned to the PMM. */
+        while (prev->next != release && prev->next != &arena) {
+            prev = prev->next;
+        }
+        if (prev->next == release && release->next != release) {
+            prev->next = release->next;
+            if (slobfree == release) {
+                slobfree = prev;
+			}
+			spin_unlock_irqrestore(&slob_lock, flags);
+			free_pages(kva2page((void *)release), pages);
+			return;
+		}
+	}
 
 	spin_unlock_irqrestore(&slob_lock, flags);
 }
@@ -272,7 +297,7 @@ void kfree(void *block)
 			if (bb->pages == block) {
 				*last = bb->next;
 				spin_unlock_irqrestore(&block_lock, flags);
-				__slob_free_pages((unsigned long)block, bb->order);
+				__slob_free_pages(block, bb->order);
 				slob_free(bb, sizeof(bigblock_t));
 				return;
 			}
@@ -293,16 +318,16 @@ unsigned int ksize(const void *block)
 	if (!block)
 		return 0;
 
-	if (!((unsigned long)block & (PAGE_SIZE-1))) {
-		spin_lock_irqsave(&block_lock, flags);
-		for (bb = bigblocks; bb; bb = bb->next)
-			if (bb->pages == block) {
-				spin_unlock_irqrestore(&slob_lock, flags);
-				return PAGE_SIZE << bb->order;
-			}
+    if (!((unsigned long)block & (PAGE_SIZE-1))) {
+        spin_lock_irqsave(&block_lock, flags);
+        for (bb = bigblocks; bb; bb = bb->next)
+            if (bb->pages == block) {
+                int order = bb->order;
+                spin_unlock_irqrestore(&block_lock, flags);
+                return PAGE_SIZE << order;
+            }
 		spin_unlock_irqrestore(&block_lock, flags);
 	}
 
 	return ((slob_t *)block - 1)->units * SLOB_UNIT;
 }
-

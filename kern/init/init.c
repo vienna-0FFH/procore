@@ -53,6 +53,7 @@ kern_init(void) {
     
     clock_init();               // init clock interrupt
     intr_enable();              // enable irq interrupt
+    smp_start_cpus();           // release APs after all global subsystems are ready
 
     //core: CAHLLENGE 1 If you try to do it, uncomment segment_switch_test()
     // user/kernel mode switch test

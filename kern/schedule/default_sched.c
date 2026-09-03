@@ -91,6 +91,7 @@ stride_dequeue(struct run_queue *rq, struct proc_struct *proc) {
      list_del_init(&(proc->run_link));
 #endif
      rq->proc_num --;
+     proc->rq = NULL;
 }
 /*
  * stride_pick_next pick the element from the ``run-queue'', with the
@@ -160,4 +161,3 @@ struct sched_class default_sched_class = {
      .pick_next = stride_pick_next,
      .proc_tick = stride_proc_tick,
 };
-

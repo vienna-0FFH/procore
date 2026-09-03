@@ -8,6 +8,31 @@ static inline void clear_bit(int nr, volatile void *addr) __attribute__((always_
 static inline void change_bit(int nr, volatile void *addr) __attribute__((always_inline));
 static inline bool test_and_set_bit(int nr, volatile void *addr) __attribute__((always_inline));
 static inline bool test_and_clear_bit(int nr, volatile void *addr) __attribute__((always_inline));
+
+static inline int atomic_add_return(int delta, volatile int *addr) __attribute__((always_inline));
+static inline int atomic_inc_return(volatile int *addr) __attribute__((always_inline));
+static inline int atomic_dec_return(volatile int *addr) __attribute__((always_inline));
+
+/* xadd returns the old value in the register and updates memory atomically. */
+static inline int
+atomic_add_return(int delta, volatile int *addr) {
+    int old = delta;
+    asm volatile ("lock; xaddl %0, %1"
+                  : "+r" (old), "+m" (*addr)
+                  :
+                  : "memory");
+    return old + delta;
+}
+
+static inline int
+atomic_inc_return(volatile int *addr) {
+    return atomic_add_return(1, addr);
+}
+
+static inline int
+atomic_dec_return(volatile int *addr) {
+    return atomic_add_return(-1, addr);
+}
 static inline bool test_bit(int nr, volatile void *addr) __attribute__((always_inline));
 
 /* *
@@ -79,4 +104,3 @@ test_and_clear_bit(int nr, volatile void *addr) {
     return oldbit != 0;
 }
 #endif /* !__LIBS_ATOMIC_H__ */
-

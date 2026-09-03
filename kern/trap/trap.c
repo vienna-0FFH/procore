@@ -16,6 +16,8 @@
 #include <sched.h>
 #include <sync.h>
 #include <proc.h>
+#include <smp.h>
+#include <smp_arch.h>
 
 #define TICK_NUM 100
 
@@ -238,9 +240,26 @@ trap_dispatch(struct trapframe *tf) {
          *    Every tick, you should update the system time, iterate the timers, and trigger the timers which are end to call scheduler.
          *    You can use one funcitons to finish all these things.
          */
-        ticks ++;
-        assert(current != NULL);
-        run_timer_list();
+        if (smp_current_cpu() == 0) {
+            ticks ++;
+            assert(current != NULL);
+            run_timer_list();
+            smp_send_reschedule();
+        }
+        else {
+            sched_tick();
+        }
+        smp_lapic_eoi();
+        break;
+    case SMP_IPI_RESCHEDULE_VECTOR:
+        if (current != NULL) {
+            sched_tick();
+            current->need_resched = 1;
+        }
+        smp_lapic_eoi();
+        break;
+    case SMP_APIC_SPURIOUS_VECTOR:
+        smp_lapic_eoi();
         break;
     case IRQ_OFFSET + IRQ_COM1:
         //c = cons_getc();
@@ -253,6 +272,7 @@ trap_dispatch(struct trapframe *tf) {
           extern void dev_stdin_write(char c);
           dev_stdin_write(c);
         }
+        smp_lapic_eoi();
         break;
     //core note 1 : implementation you should modify below codes.
     case T_SWITCH_TOU:
@@ -262,6 +282,7 @@ trap_dispatch(struct trapframe *tf) {
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:
         /* do nothing */
+        smp_lapic_eoi();
         break;
     default:
         print_trapframe(tf);
@@ -291,19 +312,16 @@ trap(struct trapframe *tf) {
         // keep a trapframe chain in stack
         struct trapframe *otf = current->tf;
         current->tf = tf;
-    
         bool in_kernel = trap_in_kernel(tf);
-    
+
         trap_dispatch(tf);
     
         current->tf = otf;
-        if (!in_kernel) {
-            if (current->flags & PF_EXITING) {
-                do_exit(-E_KILLED);
-            }
-            if (current->need_resched) {
-                schedule();
-            }
+        if (current->flags & PF_EXITING) {
+            do_exit(-E_KILLED);
+        }
+        if (current->need_resched && !in_kernel) {
+            schedule();
         }
     }
 }

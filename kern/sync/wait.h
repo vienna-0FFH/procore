@@ -2,9 +2,11 @@
 #define __KERN_SYNC_WAIT_H__
 
 #include <list.h>
+#include <spinlock.h>
 
 typedef struct {
     list_entry_t wait_head;
+    spinlock_t lock;
 } wait_queue_t;
 
 struct proc_struct;
@@ -28,6 +30,7 @@ wait_t *wait_queue_next(wait_queue_t *queue, wait_t *wait);
 wait_t *wait_queue_prev(wait_queue_t *queue, wait_t *wait);
 wait_t *wait_queue_first(wait_queue_t *queue);
 wait_t *wait_queue_last(wait_queue_t *queue);
+wait_t *wait_queue_pop(wait_queue_t *queue);
 
 bool wait_queue_empty(wait_queue_t *queue);
 bool wait_in_queue(wait_t *wait);
@@ -45,4 +48,3 @@ void wait_current_set(wait_queue_t *queue, wait_t *wait, uint32_t wait_state);
     } while (0)
 
 #endif /* !__KERN_SYNC_WAIT_H__ */
-

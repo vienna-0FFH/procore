@@ -20,7 +20,7 @@ struct file {
     int fd;
     off_t pos;
     struct inode *node;
-    int open_count;
+    volatile int open_count;
 };
 
 void fd_array_init(struct file *fd_array);
@@ -48,15 +48,12 @@ fopen_count(struct file *file) {
 
 static inline int
 fopen_count_inc(struct file *file) {
-    file->open_count += 1;
-    return file->open_count;
+    return atomic_inc_return(&file->open_count);
 }
 
 static inline int
 fopen_count_dec(struct file *file) {
-    file->open_count -= 1;
-    return file->open_count;
+    return atomic_dec_return(&file->open_count);
 }
 
 #endif /* !__KERN_FS_FILE_H__ */
-

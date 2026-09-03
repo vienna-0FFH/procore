@@ -11,6 +11,7 @@
 #include <smp_config.h>
 #include <smp_arch.h>
 #include <trap.h>
+#include <sched.h>
 
 struct mp_floating_pointer {
     char signature[4];
@@ -53,9 +54,22 @@ static uint8_t smp_bsp_apic_id;
 static int smp_ncpu = 1;
 static volatile uint32_t smp_online[SMP_MAX_CPUS];
 static struct Page *smp_ap_stacks[SMP_MAX_CPUS];
+static uintptr_t smp_ap_stack_tops[SMP_MAX_CPUS];
+static struct proc_struct *smp_current_procs[SMP_MAX_CPUS];
+static struct proc_struct *smp_idle_procs[SMP_MAX_CPUS];
 static uintptr_t smp_lapic_pa = SMP_LAPIC_DEFAULT_PA;
 static uintptr_t smp_trampoline_pa = SMP_TRAMPOLINE_PA;
+static volatile uint32_t smp_scheduler_started;
 static bool smp_enabled;
+static spinlock_t smp_ipi_lock;
+
+/* Each CPU needs a private TSS because ring transitions use its kernel stack. */
+static struct taskstate smp_tss[SMP_MAX_CPUS];
+static struct segdesc smp_gdt[SMP_MAX_CPUS][SEG_TSS + 1];
+static struct pseudodesc smp_gdt_pd[SMP_MAX_CPUS];
+static volatile bool smp_arch_ready[SMP_MAX_CPUS];
+
+extern char bootstacktop[];
 
 extern char smp_trampoline_start[];
 extern char smp_trampoline_end[];
@@ -81,6 +95,78 @@ smp_lapic_read(uint32_t offset) {
 static void
 smp_lapic_write(uint32_t offset, uint32_t value) {
     *smp_lapic_reg(offset) = value;
+}
+
+struct proc_struct **
+smp_current_ptr(void) {
+    int cpu = smp_current_cpu();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) {
+        cpu = 0;
+    }
+    return &smp_current_procs[cpu];
+}
+
+struct proc_struct **
+smp_idle_ptr(void) {
+    int cpu = smp_current_cpu();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS) {
+        cpu = 0;
+    }
+    return &smp_idle_procs[cpu];
+}
+
+void
+smp_set_current(int cpu, struct proc_struct *proc) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_current_procs[cpu] = proc;
+    }
+}
+
+void
+smp_set_idle(int cpu, struct proc_struct *proc) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_idle_procs[cpu] = proc;
+    }
+}
+
+static void
+smp_load_cpu_gdt(int cpu, uintptr_t esp0) {
+    struct segdesc *gdt;
+    struct pseudodesc *pd;
+
+    gdt = smp_gdt[cpu];
+    pd = &smp_gdt_pd[cpu];
+    memset(&smp_tss[cpu], 0, sizeof(smp_tss[cpu]));
+    smp_tss[cpu].ts_esp0 = esp0;
+    smp_tss[cpu].ts_ss0 = KERNEL_DS;
+    smp_tss[cpu].ts_iomb = sizeof(smp_tss[cpu]);
+    gdt[0] = SEG_NULL;
+    gdt[SEG_KTEXT] = SEG(STA_X | STA_R, 0, 0xFFFFFFFF, DPL_KERNEL);
+    gdt[SEG_KDATA] = SEG(STA_W, 0, 0xFFFFFFFF, DPL_KERNEL);
+    gdt[SEG_UTEXT] = SEG(STA_X | STA_R, 0, 0xFFFFFFFF, DPL_USER);
+    gdt[SEG_UDATA] = SEG(STA_W, 0, 0xFFFFFFFF, DPL_USER);
+    gdt[SEG_TSS] = SEGTSS(STS_T32A, (uintptr_t)&smp_tss[cpu],
+                          sizeof(smp_tss[cpu]), DPL_KERNEL);
+    pd->pd_lim = sizeof(smp_gdt[cpu]) - 1;
+    pd->pd_base = (uintptr_t)gdt;
+
+    asm volatile ("lgdt (%0)" :: "r"(pd) : "memory");
+    asm volatile ("movw %%ax, %%gs" :: "a"(USER_DS));
+    asm volatile ("movw %%ax, %%fs" :: "a"(USER_DS));
+    asm volatile ("movw %%ax, %%es" :: "a"(KERNEL_DS));
+    asm volatile ("movw %%ax, %%ds" :: "a"(KERNEL_DS));
+    asm volatile ("movw %%ax, %%ss" :: "a"(KERNEL_DS));
+    asm volatile ("ljmp %0, $1f\n 1:" :: "i"(KERNEL_CS));
+    ltr(GD_TSS);
+    smp_arch_ready[cpu] = 1;
+}
+
+void
+smp_set_esp0(uintptr_t esp0) {
+    int cpu = smp_current_cpu();
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS && smp_arch_ready[cpu]) {
+        smp_tss[cpu].ts_esp0 = esp0;
+    }
 }
 
 void
@@ -223,6 +309,9 @@ smp_parse_config(struct mp_floating_pointer *mpfp) {
         if (type == MP_ENTRY_PROCESSOR) {
             struct mp_processor_entry *processor = (struct mp_processor_entry *)entry;
             entry_size = 20;
+            if (offset + entry_size > header->length) {
+                return -E_INVAL;
+            }
             if (processor->flags & MP_CPU_ENABLED) {
                 if (smp_ncpu >= SMP_MAX_CPUS) {
                     return -E_TOO_BIG;
@@ -303,6 +392,26 @@ smp_cpu_has_apic(void) {
     return (result[3] & (1U << 9)) != 0;
 }
 
+static void
+smp_init_local_apic(bool bsp) {
+    smp_lapic_write(LAPIC_TPR, 0);
+    smp_lapic_write(LAPIC_SVR, APIC_SVR_ENABLE | APIC_SPURIOUS_VECTOR);
+    smp_lapic_write(LAPIC_LVT_TIMER, APIC_LVT_MASKED);
+    smp_lapic_write(LAPIC_LVT_LINT0, bsp ? APIC_LVT_EXTINT : APIC_LVT_MASKED);
+    smp_lapic_write(LAPIC_LVT_LINT1, APIC_LVT_MASKED);
+    smp_lapic_write(LAPIC_ESR, 0);
+}
+
+static void
+smp_enable_local_apic(void) {
+    uint64_t apic_base = smp_rdmsr(MSR_IA32_APIC_BASE);
+    smp_wrmsr(MSR_IA32_APIC_BASE,
+              (apic_base & ~((uint64_t)PGSIZE - 1) &
+               ~(uint64_t)APIC_BASE_X2APIC) |
+              (smp_lapic_pa & ~((uintptr_t)PGSIZE - 1)) |
+              APIC_BASE_ENABLE);
+}
+
 static int
 smp_map_lapic(void) {
     pte_t *ptep = get_pte(boot_pgdir, SMP_LAPIC_VA, 1);
@@ -330,10 +439,41 @@ smp_lapic_wait_icr(void) {
 static int
 smp_lapic_send_ipi(uint8_t apic_id, uint32_t command) {
     int ret;
+
+    spin_lock(&smp_ipi_lock);
     smp_lapic_write(LAPIC_ICR_HIGH, (uint32_t)apic_id << 24);
     smp_lapic_write(LAPIC_ICR_LOW, command);
     ret = smp_lapic_wait_icr();
+    spin_unlock(&smp_ipi_lock);
     return ret;
+}
+
+void
+smp_send_reschedule(void) {
+    int cpu;
+    if (!smp_enabled) {
+        return;
+    }
+    for (cpu = 1; cpu < smp_ncpu; cpu++) {
+        if (smp_online[cpu] != 0) {
+            smp_lapic_send_ipi(smp_apic_ids[cpu], SMP_IPI_RESCHEDULE_VECTOR);
+        }
+    }
+}
+
+void
+smp_send_reschedule_cpu(int cpu_index) {
+    int current_cpu;
+
+    if (!smp_enabled || cpu_index < 0 || cpu_index >= smp_ncpu ||
+        smp_online[cpu_index] == 0) {
+        return;
+    }
+    current_cpu = smp_current_cpu();
+    if (cpu_index == current_cpu) {
+        return;
+    }
+    smp_lapic_send_ipi(smp_apic_ids[cpu_index], SMP_IPI_RESCHEDULE_VECTOR);
 }
 
 static void
@@ -418,15 +558,25 @@ smp_ap_entry(uint32_t cpu_index) {
     /* The trampoline's temporary GDT has the same flat segments as the
      * kernel GDT.  Install the shared IDT before declaring the AP online so
      * an unexpected interrupt cannot use the reset-time null IDT. */
+    if (cpu_index >= SMP_MAX_CPUS) {
+        for (;;) {
+            asm volatile ("hlt");
+        }
+    }
+    smp_load_cpu_gdt(cpu_index, smp_ap_stack_tops[cpu_index]);
     idt_init();
+    smp_enable_local_apic();
+    smp_init_local_apic(0);
     if (cpu_index < SMP_MAX_CPUS) {
+        barrier();
         smp_online[cpu_index] = 1;
     }
-    for (;;) {
-        /* AP scheduling is deliberately not enabled until per-CPU process
-         * state exists.  HLT keeps the validated AP bootstrap inexpensive. */
-        asm volatile ("hlt");
+    barrier();
+    while (smp_scheduler_started == 0) {
+        asm volatile ("pause");
     }
+    smp_set_current(cpu_index, smp_idle_procs[cpu_index]);
+    sched_cpu_idle();
 }
 
 void
@@ -439,6 +589,9 @@ smp_init(void) {
     smp_online[0] = 1;
     smp_ncpu = 1;
     smp_enabled = 0;
+    smp_scheduler_started = 0;
+    spin_init(&smp_ipi_lock);
+    smp_load_cpu_gdt(0, (uintptr_t)bootstacktop);
 
     mpfp = smp_find_mpfp();
     ret = (mpfp != NULL) ? smp_parse_config(mpfp) : -E_NA_DEV;
@@ -480,20 +633,8 @@ smp_init(void) {
         return;
     }
 
-    {
-        uint64_t apic_base = smp_rdmsr(MSR_IA32_APIC_BASE);
-        smp_wrmsr(MSR_IA32_APIC_BASE,
-                  (apic_base & ~((uint64_t)PGSIZE - 1) &
-                   ~(uint64_t)APIC_BASE_X2APIC) |
-                  (smp_lapic_pa & ~((uintptr_t)PGSIZE - 1)) |
-                  APIC_BASE_ENABLE);
-    }
-    smp_lapic_write(LAPIC_TPR, 0);
-    smp_lapic_write(LAPIC_SVR, APIC_SVR_ENABLE | APIC_SPURIOUS_VECTOR);
-    smp_lapic_write(LAPIC_LVT_TIMER, APIC_LVT_MASKED);
-    smp_lapic_write(LAPIC_LVT_LINT0, APIC_LVT_MASKED);
-    smp_lapic_write(LAPIC_LVT_LINT1, APIC_LVT_NMI);
-    smp_lapic_write(LAPIC_ESR, 0);
+    smp_enable_local_apic();
+    smp_init_local_apic(1);
 
     /* AP execution enables paging while the low identity mapping is present. */
     boot_pgdir[0] = boot_pgdir[PDX(KERNBASE)];
@@ -503,8 +644,9 @@ smp_init(void) {
             smp_ncpu = i;
             break;
         }
+        smp_ap_stack_tops[i] = (uintptr_t)page2kva(smp_ap_stacks[i]) + KSTACKSIZE;
         ret = smp_prepare_trampoline(i,
-                (uintptr_t)page2kva(smp_ap_stacks[i]) + KSTACKSIZE);
+                smp_ap_stack_tops[i]);
         if (ret == 0) {
             ret = smp_boot_ap(i);
         }
@@ -541,6 +683,14 @@ smp_cpu_online_count(void) {
 bool
 smp_is_enabled(void) {
     return smp_enabled;
+}
+
+void
+smp_start_cpus(void) {
+    barrier();
+    smp_scheduler_started = 1;
+    barrier();
+    smp_send_reschedule();
 }
 
 int

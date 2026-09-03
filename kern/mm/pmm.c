@@ -11,6 +11,7 @@
 #include <swap.h>
 #include <vmm.h>
 #include <kmalloc.h>
+#include <smp.h>
 
 /* *
  * Task State Segment:
@@ -46,6 +47,7 @@ uintptr_t boot_cr3;
 
 // physical memory management
 const struct pmm_manager *pmm_manager;
+static spinlock_t pmm_lock;
 
 /* *
  * The page directory entry corresponding to the virtual address range
@@ -117,6 +119,7 @@ lgdt(struct pseudodesc *pd) {
 void
 load_esp0(uintptr_t esp0) {
     ts.ts_esp0 = esp0;
+    smp_set_esp0(esp0);
 }
 
 /* gdt_init - initialize the default GDT and TSS */
@@ -159,9 +162,9 @@ alloc_pages(size_t n) {
     while (1)
     {
          local_intr_save(intr_flag);
-         {
-              page = pmm_manager->alloc_pages(n);
-         }
+         spin_lock(&pmm_lock);
+         page = pmm_manager->alloc_pages(n);
+         spin_unlock(&pmm_lock);
          local_intr_restore(intr_flag);
 
          if (page != NULL || n > 1 || swap_init_ok == 0) break;
@@ -179,9 +182,9 @@ void
 free_pages(struct Page *base, size_t n) {
     bool intr_flag;
     local_intr_save(intr_flag);
-    {
-        pmm_manager->free_pages(base, n);
-    }
+    spin_lock(&pmm_lock);
+    pmm_manager->free_pages(base, n);
+    spin_unlock(&pmm_lock);
     local_intr_restore(intr_flag);
 }
 
@@ -192,9 +195,9 @@ nr_free_pages(void) {
     size_t ret;
     bool intr_flag;
     local_intr_save(intr_flag);
-    {
-        ret = pmm_manager->nr_free_pages();
-    }
+    spin_lock(&pmm_lock);
+    ret = pmm_manager->nr_free_pages();
+    spin_unlock(&pmm_lock);
     local_intr_restore(intr_flag);
     return ret;
 }
@@ -298,6 +301,7 @@ boot_alloc_page(void) {
 //         - check the correctness of pmm & paging mechanism, print PDT&PT
 void
 pmm_init(void) {
+    spin_init(&pmm_lock);
     //We need to alloc/free the physical memory (granularity is 4KB or other size). 
     //So a framework of physical memory manager (struct pmm_manager)is defined in pmm.h
     //First we should init a physical memory manager(pmm) based on the framework.

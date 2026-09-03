@@ -35,7 +35,7 @@ struct mm_struct {
     pde_t *pgdir;                  // the PDT of these vma
     int map_count;                 // the count of these vma
     void *sm_priv;                 // the private data for swap manager
-    int mm_count;                  // the number ofprocess which shared the mm
+    volatile int mm_count;          // the number of processes sharing the mm
     semaphore_t mm_sem;            // mutex for using dup_mmap fun to duplicat the mm 
     int locked_by;                 // the lock owner process's pid
 
@@ -79,14 +79,12 @@ set_mm_count(struct mm_struct *mm, int val) {
 
 static inline int
 mm_count_inc(struct mm_struct *mm) {
-    mm->mm_count += 1;
-    return mm->mm_count;
+    return atomic_inc_return(&mm->mm_count);
 }
 
 static inline int
 mm_count_dec(struct mm_struct *mm) {
-    mm->mm_count -= 1;
-    return mm->mm_count;
+    return atomic_dec_return(&mm->mm_count);
 }
 
 static inline void
@@ -108,4 +106,3 @@ unlock_mm(struct mm_struct *mm) {
 }
 
 #endif /* !__KERN_MM_VMM_H__ */
-

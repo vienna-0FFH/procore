@@ -36,6 +36,11 @@
 #define SMP_AP_STARTUP_TIMEOUT        50000000U
 #endif
 
+#ifndef SMP_IPI_RESCHEDULE_VECTOR
+#define SMP_IPI_RESCHEDULE_VECTOR    0xF0
+#endif
+
+
 #if SMP_MAX_CPUS < 1
 #error "SMP_MAX_CPUS must be positive"
 #endif

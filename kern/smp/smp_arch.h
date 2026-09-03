@@ -22,6 +22,7 @@
 
 #define SMP_APIC_SVR_ENABLE          (1U << 8)
 #define SMP_APIC_LVT_MASKED          (1U << 16)
+#define SMP_APIC_LVT_EXTINT          (7U << 8)
 #define SMP_APIC_LVT_NMI             (4U << 8)
 #define SMP_APIC_ICR_DELIVERY_STATUS (1U << 12)
 #define SMP_APIC_ICR_LEVEL_ASSERT    (1U << 14)
@@ -56,6 +57,7 @@
 #define LAPIC_LVT_LINT1              SMP_LAPIC_LVT_LINT1
 #define APIC_SVR_ENABLE              SMP_APIC_SVR_ENABLE
 #define APIC_LVT_MASKED              SMP_APIC_LVT_MASKED
+#define APIC_LVT_EXTINT              SMP_APIC_LVT_EXTINT
 #define APIC_LVT_NMI                 SMP_APIC_LVT_NMI
 #define APIC_ICR_DELIVERY_STATUS     SMP_APIC_ICR_DELIVERY_STATUS
 #define APIC_ICR_LEVEL_ASSERT        SMP_APIC_ICR_LEVEL_ASSERT

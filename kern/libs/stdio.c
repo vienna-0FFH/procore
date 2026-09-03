@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <console.h>
 #include <unistd.h>
+#include <sync.h>
+
+static spinlock_t console_lock;
 /* HIGH level console I/O */
 
 /* *
@@ -26,7 +29,13 @@ cputch(int c, int *cnt) {
 int
 vcprintf(const char *fmt, va_list ap) {
     int cnt = 0;
+    bool intr_flag;
+
+    local_intr_save(intr_flag);
+    spin_lock(&console_lock);
     vprintfmt((void*)cputch, NO_FD, &cnt, fmt, ap);
+    spin_unlock(&console_lock);
+    local_intr_restore(intr_flag);
     return cnt;
 }
 
@@ -75,4 +84,3 @@ getchar(void) {
         /* do nothing */;
     return c;
 }
-

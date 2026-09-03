@@ -7,6 +7,10 @@
 #include <memlayout.h>
 #include <skew_heap.h>
 
+struct proc_struct;
+struct proc_struct **smp_current_ptr(void);
+struct proc_struct **smp_idle_ptr(void);
+
 
 // process's state in his life cycle
 enum proc_state {
@@ -61,6 +65,8 @@ struct proc_struct {
     uint32_t wait_state;                        // waiting state
     struct proc_struct *cptr, *yptr, *optr;     // relations between processes
     struct run_queue *rq;                       // running queue contains Process
+    int cpu;                                    // last CPU owning this process
+    volatile bool on_cpu;                       // process is currently executing on a CPU
     list_entry_t run_link;                      // the entry linked in run queue
     int time_slice;                             // time slice for occupying the CPU
     skew_heap_entry_t lab6_run_pool;            // process scheduler state: the entry in the run pool
@@ -80,10 +86,15 @@ struct proc_struct {
 #define le2proc(le, member)         \
     to_struct((le), struct proc_struct, member)
 
-extern struct proc_struct *idleproc, *initproc, *current;
+extern struct proc_struct *initproc;
+
+/* These names remain source-compatible while resolving to the local CPU. */
+#define current (*smp_current_ptr())
+#define idleproc (*smp_idle_ptr())
 
 void proc_init(void);
 void proc_run(struct proc_struct *proc);
+void proc_switch_out_context(struct context *context);
 int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
 
 char *set_proc_name(struct proc_struct *proc, const char *name);
@@ -101,4 +112,3 @@ int do_kill(int pid);
 void lab6_set_priority(uint32_t priority);
 int do_sleep(unsigned int time);
 #endif /* !__KERN_PROCESS_PROC_H__ */
-

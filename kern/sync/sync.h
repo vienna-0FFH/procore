@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <atomic.h>
 #include <sched.h>
+#include <spinlock.h>
 
 static inline bool
 __intr_save(void) {
@@ -28,4 +29,3 @@ __intr_restore(bool flag) {
 #define local_intr_restore(x)   __intr_restore(x);
 
 #endif /* !__KERN_SYNC_SYNC_H__ */
-
