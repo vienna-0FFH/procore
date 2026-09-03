@@ -37,6 +37,9 @@ kern_init(void) {
     pmm_init();                 // init physical memory management
 
     virt_init();                // probe VMX/VMM capabilities
+#if VIRT_SELFTEST
+    virt_selftest();            // explicit VMX/VMM smoke test when requested
+#endif
 
     pic_init();                 // init interrupt controller
     idt_init();                 // init interrupt descriptor table

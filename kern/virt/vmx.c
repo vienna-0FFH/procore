@@ -4,6 +4,7 @@
 #include <string.h>
 #include <pmm.h>
 #include <mmu.h>
+#include <smp.h>
 #include <vmx.h>
 
 #define CPUID_LEAF_FEATURES             1
@@ -14,6 +15,13 @@ static struct Page *vmxon_page;
 static uint32_t vmxon_pa;
 static uint32_t vmxon_old_cr0;
 static uint32_t vmxon_old_cr4;
+static int vmx_owner_cpu = -1;
+
+static inline int
+vmx_current_cpu(void) {
+    int cpu = smp_current_cpu();
+    return cpu < 0 ? 0 : cpu;
+}
 
 static inline void
 vmx_cpuid(uint32_t leaf, uint32_t subleaf, uint32_t result[4]) {
@@ -29,6 +37,13 @@ vmx_rdmsr(uint32_t msr) {
     uint32_t low, high;
     asm volatile ("rdmsr" : "=a" (low), "=d" (high) : "c" (msr));
     return ((uint64_t)high << 32) | low;
+}
+
+static inline void
+vmx_wrmsr(uint32_t msr, uint64_t value) {
+    uint32_t low = (uint32_t)value;
+    uint32_t high = (uint32_t)(value >> 32);
+    asm volatile ("wrmsr" :: "c" (msr), "a" (low), "d" (high));
 }
 
 static inline uint32_t
@@ -85,14 +100,11 @@ vmx_vmxon(uintptr_t region_pa) {
 
 static int
 vmx_vmxoff(void) {
-    uint8_t failed;
-    asm volatile (
-        ".byte 0x0f, 0x01, 0xc4\n\t"
-        "setna %0"
-        : "=q" (failed)
-        :
-        : "cc", "memory");
-    return failed ? -E_INVAL : 0;
+    /* VMXOFF has no VMfail flag result.  Linux's hardware_disable() treats
+     * it as a non-returning-success instruction and relies on the caller's
+     * VMX-root invariant; reading CF/ZF here would consume stale flags. */
+    asm volatile (".byte 0x0f, 0x01, 0xc4" ::: "cc", "memory");
+    return 0;
 }
 
 static int
@@ -125,6 +137,12 @@ void
 vmx_init(void) {
     uint32_t result[4];
 
+    /* Re-probing must not discard the live VMXON region.  VMXON is a
+     * per-CPU architectural state, so a second initialization on the same
+     * CPU is a no-op until vmx_disable() has completed. */
+    if (vmx_cpu.status == VMX_STATUS_ON) {
+        return;
+    }
     memset(&vmx_cpu, 0, sizeof(vmx_cpu));
     vmx_cpu.status = VMX_STATUS_UNKNOWN;
 
@@ -151,9 +169,19 @@ vmx_init(void) {
     vmx_cpu.feature_control = vmx_rdmsr(MSR_IA32_FEATURE_CONTROL);
 
     if ((vmx_cpu.feature_control & IA32_FEATURE_CONTROL_LOCK) == 0) {
-        vmx_cpu.status = VMX_STATUS_FIRMWARE_UNCONFIGURED;
-        cprintf("vmx: present but IA32_FEATURE_CONTROL is unlocked\n");
-        return;
+        /* Intel permits software to program this MSR once before locking it.
+         * Match Linux's setup_vmcs_config policy and enable VMXON outside
+         * SMX, then make the decision permanent for this boot. */
+        vmx_cpu.feature_control |= IA32_FEATURE_CONTROL_LOCK |
+                                    IA32_FEATURE_CONTROL_VMXON;
+        vmx_wrmsr(MSR_IA32_FEATURE_CONTROL, vmx_cpu.feature_control);
+        vmx_cpu.feature_control = vmx_rdmsr(MSR_IA32_FEATURE_CONTROL);
+        if ((vmx_cpu.feature_control & IA32_FEATURE_CONTROL_LOCK) == 0) {
+            vmx_cpu.status = VMX_STATUS_FIRMWARE_UNCONFIGURED;
+            cprintf("vmx: unable to lock IA32_FEATURE_CONTROL\n");
+            return;
+        }
+        cprintf("vmx: enabled VMXON outside SMX in IA32_FEATURE_CONTROL\n");
     }
     if ((vmx_cpu.feature_control & IA32_FEATURE_CONTROL_VMXON) == 0) {
         vmx_cpu.status = VMX_STATUS_LOCKED_OUT;
@@ -178,19 +206,22 @@ vmx_supported(void) {
 
 bool
 vmx_is_on(void) {
-    return vmx_cpu.status == VMX_STATUS_ON;
+    return vmx_cpu.status == VMX_STATUS_ON &&
+           vmx_owner_cpu == vmx_current_cpu();
 }
 
 int
 vmx_enable(void) {
     uint32_t cr0, cr4;
     int ret;
+    int cpu;
 
     if (vmx_cpu.status == VMX_STATUS_UNKNOWN) {
         vmx_init();
     }
+    cpu = vmx_current_cpu();
     if (vmx_cpu.status == VMX_STATUS_ON) {
-        return 0;
+        return vmx_owner_cpu == cpu ? 0 : -E_BUSY;
     }
     if (vmx_cpu.status != VMX_STATUS_READY) {
         return -E_NA_DEV;
@@ -224,6 +255,7 @@ vmx_enable(void) {
         return ret;
     }
     vmx_cpu.status = VMX_STATUS_ON;
+    vmx_owner_cpu = cpu;
     return 0;
 }
 
@@ -233,6 +265,9 @@ vmx_disable(void) {
     if (vmx_cpu.status != VMX_STATUS_ON) {
         return 0;
     }
+    if (vmx_owner_cpu != vmx_current_cpu()) {
+        return -E_BUSY;
+    }
     ret = vmx_vmxoff();
     vmx_write_cr0(vmxon_old_cr0);
     vmx_write_cr4(vmxon_old_cr4);
@@ -241,13 +276,16 @@ vmx_disable(void) {
         vmxon_page = NULL;
     }
     vmxon_pa = 0;
+    vmx_owner_cpu = -1;
     vmx_cpu.status = (ret == 0) ? VMX_STATUS_READY : VMX_STATUS_FAILED;
     return ret;
 }
 
 int
 vmx_vmclear(uintptr_t vmcs_pa) {
-    if (!vmx_is_on() || (vmcs_pa & (PGSIZE - 1)) != 0) {
+    if (!vmx_is_on() || vmcs_pa == 0 ||
+        (vmcs_pa & (PGSIZE - 1)) != 0 ||
+        vmcs_pa >= ((uintptr_t)npage << PGSHIFT)) {
         return -E_INVAL;
     }
     return vmx_vmclear_instruction(vmcs_pa);
@@ -255,7 +293,9 @@ vmx_vmclear(uintptr_t vmcs_pa) {
 
 int
 vmx_vmptrld(uintptr_t vmcs_pa) {
-    if (!vmx_is_on() || (vmcs_pa & (PGSIZE - 1)) != 0) {
+    if (!vmx_is_on() || vmcs_pa == 0 ||
+        (vmcs_pa & (PGSIZE - 1)) != 0 ||
+        vmcs_pa >= ((uintptr_t)npage << PGSHIFT)) {
         return -E_INVAL;
     }
     return vmx_vmptrld_instruction(vmcs_pa);
@@ -269,6 +309,7 @@ vmx_vmread32(uint32_t field, uint32_t *value_store) {
         return -E_INVAL;
     }
     asm volatile (
+        /* Linux/KVM's VMREAD_RDX_RAX encoding: field in %edx, value in %eax. */
         ".byte 0x0f, 0x78, 0xd0\n\t"
         "setna %1"
         : "=a" (value), "=q" (failed)
@@ -288,6 +329,7 @@ vmx_vmwrite32(uint32_t field, uint32_t value) {
         return -E_INVAL;
     }
     asm volatile (
+        /* Linux/KVM's VMWRITE_RAX_RDX encoding: value in %eax, field in %edx. */
         ".byte 0x0f, 0x79, 0xd0\n\t"
         "setna %0"
         : "=q" (failed)

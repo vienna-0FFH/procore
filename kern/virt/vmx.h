@@ -15,6 +15,9 @@
 #define IA32_FEATURE_CONTROL_VMXON    (1U << 2)
 #define CR4_VMXE                      (1U << 13)
 
+/* 32-bit guest-state field used by the optional VMCS smoke test. */
+#define VMX_VMCS_GUEST_RIP            0x0000681E
+
 enum vmx_status {
     VMX_STATUS_UNKNOWN = 0,
     VMX_STATUS_UNSUPPORTED,
@@ -45,7 +48,9 @@ bool vmx_is_on(void);
 int vmx_enable(void);
 int vmx_disable(void);
 
-/* Minimal VMCS instruction wrappers for the next VMM stage. */
+/* Minimal VMCS instruction wrappers for the next VMM stage.  VMXON is
+ * currently bound to the CPU that called vmx_enable(); callers must keep
+ * VMCS operations on that CPU until vmx_disable() returns. */
 int vmx_vmclear(uintptr_t vmcs_pa);
 int vmx_vmptrld(uintptr_t vmcs_pa);
 int vmx_vmread32(uint32_t field, uint32_t *value_store);
