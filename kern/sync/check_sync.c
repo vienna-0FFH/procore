@@ -207,3 +207,8 @@ void check_sync(void){
         set_proc_name(philosopher_proc_condvar[i], "philosopher_condvar_proc");
     }
 }
+
+void
+check_sync_cleanup(void) {
+    monitor_destroy(&mt);
+}

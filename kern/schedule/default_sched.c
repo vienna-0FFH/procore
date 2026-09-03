@@ -92,6 +92,7 @@ stride_dequeue(struct run_queue *rq, struct proc_struct *proc) {
 #endif
      rq->proc_num --;
      proc->rq = NULL;
+     proc->on_rq = 0;
 }
 /*
  * stride_pick_next pick the element from the ``run-queue'', with the

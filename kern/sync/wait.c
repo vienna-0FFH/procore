@@ -198,9 +198,17 @@ void
 wait_current_set(wait_queue_t *queue, wait_t *wait, uint32_t wait_state) {
     assert(current != NULL);
     wait_init(wait, current);
+    /* Publish queue membership and the sleeping state as one operation.
+     * Linux's prepare_to_wait() uses the same ordering: a waker must see
+     * either no waiter or a fully initialized waiter whose state is already
+     * visible.  Keep proc_lock first, then queue->lock, matching wakeup_proc
+     * (which never holds the queue lock while taking proc_lock). */
     spin_lock(&proc_lock);
+    spin_lock(&queue->lock);
+    wait->wait_queue = queue;
+    list_add_before(&(queue->wait_head), &(wait->wait_link));
     current->state = PROC_SLEEPING;
     current->wait_state = wait_state;
+    spin_unlock(&queue->lock);
     spin_unlock(&proc_lock);
-    wait_queue_add(queue, wait);
 }

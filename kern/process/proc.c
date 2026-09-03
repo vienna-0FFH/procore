@@ -125,6 +125,7 @@ alloc_proc(void) {
         proc->wait_state = 0;
         proc->cptr = proc->optr = proc->yptr = NULL;
         proc->rq = NULL;
+        proc->on_rq = 0;
         proc->cpu = 0;
         proc->on_cpu = 0;
         list_init(&(proc->run_link));
@@ -228,7 +229,6 @@ proc_run(struct proc_struct *proc) {
             load_esp0(next->kstack + KSTACKSIZE);
             lcr3(next->cr3);
             switch_to(&(prev->context), &(next->context));
-            proc_switch_complete();
         }
         local_intr_restore(intr_flag);
     }
@@ -247,7 +247,7 @@ proc_switch_complete(void) {
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);
     proc->on_cpu = 0;
-    if (proc->state == PROC_RUNNABLE && proc->rq == NULL) {
+    if (proc->state == PROC_RUNNABLE && proc->rq == NULL && !proc->on_rq) {
         /* A wakeup may have raced with the context switch while on_cpu was
          * still set.  Re-check after publishing the hand-off so the task is
          * not left runnable but absent from every run queue. */
@@ -272,7 +272,6 @@ proc_switch_complete(void) {
 //       after switch_to, the current proc will execute here.
 static void
 forkret(void) {
-    proc_switch_complete();
     bool intr_flag;
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);
@@ -1147,6 +1146,8 @@ init_main(void *arg) {
     }
 
     fs_cleanup();
+    extern void check_sync_cleanup(void);
+    check_sync_cleanup();
         
     cprintf("all user-mode processes have quit.\n");
     assert(initproc->cptr == NULL && initproc->yptr == NULL && initproc->optr == NULL);
@@ -1202,6 +1203,7 @@ proc_init(void) {
         ap_idle->state = PROC_RUNNABLE;
         ap_idle->need_resched = 1;
         ap_idle->cpu = i;
+        ap_idle->on_cpu = 1;
         set_proc_name(ap_idle, "idle");
         smp_set_idle(i, ap_idle);
         smp_set_current(i, ap_idle);

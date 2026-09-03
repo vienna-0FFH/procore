@@ -22,6 +22,17 @@ monitor_init (monitor_t * mtp, size_t num_cv) {
     }
 }
 
+void
+monitor_destroy(monitor_t *mtp) {
+    if (mtp == NULL || mtp->cv == NULL) {
+        return;
+    }
+    /* Callers must destroy a monitor only after all users have left it. */
+    kfree(mtp->cv);
+    mtp->cv = NULL;
+    mtp->next_count = 0;
+}
+
 // Unlock one of threads waiting on the condition variable. 
 void 
 cond_signal (condvar_t *cvp) {

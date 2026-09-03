@@ -31,9 +31,10 @@ sched_is_idle(struct proc_struct *proc) {
 
 static inline void
 sched_class_enqueue_locked(struct run_queue *rq, struct proc_struct *proc) {
-    if (!sched_is_idle(proc) && proc->rq == NULL) {
+    if (!sched_is_idle(proc) && proc->rq == NULL && !proc->on_rq) {
         sched_class->enqueue(rq, proc);
         proc->rq = rq;
+        proc->on_rq = 1;
         proc->cpu = rq->cpu_id;
     }
 }
@@ -42,6 +43,7 @@ static inline void
 sched_class_dequeue_locked(struct run_queue *rq, struct proc_struct *proc) {
     sched_class->dequeue(rq, proc);
     proc->rq = NULL;
+    proc->on_rq = 0;
 }
 
 static int
@@ -78,7 +80,8 @@ sched_enqueue_proc(struct proc_struct *proc) {
     cpu = sched_choose_cpu(proc);
     rq = &sched_rq[cpu];
     spin_lock(&rq->lock);
-    if (!proc->on_cpu && proc->rq == NULL && proc->state == PROC_RUNNABLE) {
+    if (!proc->on_cpu && !proc->on_rq && proc->rq == NULL &&
+        proc->state == PROC_RUNNABLE) {
         sched_class_enqueue_locked(rq, proc);
         queued = 1;
     }
@@ -153,7 +156,7 @@ wakeup_proc(struct proc_struct *proc) {
         enqueue = 1;
     }
     else if (proc->state == PROC_RUNNABLE && !proc->on_cpu &&
-             proc->rq == NULL) {
+             !proc->on_rq && proc->rq == NULL) {
         /* A caller may have changed the state while holding proc_lock.
          * Ensure that this runnable process still reaches a run queue. */
         enqueue = 1;
@@ -182,7 +185,7 @@ schedule(void) {
     if (prev != NULL) {
         prev->need_resched = 0;
         if (prev->state == PROC_RUNNABLE && !sched_is_idle(prev) &&
-            prev->rq == NULL) {
+            prev->rq == NULL && !prev->on_rq) {
             sched_class_enqueue_locked(rq, prev);
         }
         if (rq->proc_num != 0) {
@@ -232,6 +235,9 @@ sched_tick(void) {
 void
 sched_cpu_idle(void) {
     for (;;) {
+        /* A switch into the idle context has no proc_run() continuation;
+         * retire the previous CPU owner here before servicing work. */
+        proc_switch_complete();
         if (current == NULL) {
             current = idleproc;
         }

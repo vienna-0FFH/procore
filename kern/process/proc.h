@@ -65,6 +65,7 @@ struct proc_struct {
     uint32_t wait_state;                        // waiting state
     struct proc_struct *cptr, *yptr, *optr;     // relations between processes
     struct run_queue *rq;                       // running queue contains Process
+    volatile bool on_rq;                         // linked on a run queue
     int cpu;                                    // last CPU owning this process
     volatile bool on_cpu;                       // process is currently executing on a CPU
     list_entry_t run_link;                      // the entry linked in run queue
