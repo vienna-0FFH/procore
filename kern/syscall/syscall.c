@@ -10,6 +10,7 @@
 #include <stat.h>
 #include <dirent.h>
 #include <sysfile.h>
+#include <error.h>
 
 static int
 sys_exit(uint32_t arg[]) {
@@ -200,8 +201,8 @@ syscall(void) {
             return ;
         }
     }
-    print_trapframe(tf);
-    panic("undefined syscall %d, pid = %d, name = %s.\n",
-            num, current->pid, current->name);
+    /* Unknown or reserved calls are a user-visible capability boundary.
+     * Match the normal negative-error convention instead of taking the whole
+     * kernel into the monitor for a harmless feature probe. */
+    tf->tf_regs.reg_eax = -E_UNIMP;
 }
-
