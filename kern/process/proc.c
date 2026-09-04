@@ -478,6 +478,12 @@ put_fs(struct proc_struct *proc) {
  */
 int
 do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
+    return do_fork_with_entry(clone_flags, stack, tf, 0);
+}
+
+int
+do_fork_with_entry(uint32_t clone_flags, uintptr_t stack,
+                   struct trapframe *tf, uintptr_t entry) {
     int ret = -E_NO_FREE_PROC;
     struct proc_struct *proc;
     bool reserved = 0;
@@ -553,6 +559,9 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
         goto bad_fork_cleanup_fs;
     }
     copy_thread(proc, stack, tf);
+    if (entry != 0) {
+        proc->tf->tf_eip = entry;
+    }
 
     local_intr_save(intr_flag);
     {

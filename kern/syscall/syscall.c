@@ -5,6 +5,7 @@
 #include <trap.h>
 #include <stdio.h>
 #include <pmm.h>
+#include <vmm.h>
 #include <assert.h>
 #include <clock.h>
 #include <stat.h>
@@ -23,6 +24,44 @@ sys_fork(uint32_t arg[]) {
     struct trapframe *tf = current->tf;
     uintptr_t stack = tf->tf_esp;
     return do_fork(0, stack, tf);
+}
+
+static int
+sys_clone(uint32_t arg[]) {
+    const uint32_t supported = CLONE_VM | CLONE_FS;
+    uint32_t clone_flags = arg[0];
+    uintptr_t stack = arg[1];
+    uintptr_t entry = arg[2];
+    uintptr_t fn = arg[3];
+    uintptr_t fn_arg = arg[4];
+    struct trapframe *tf = current->tf;
+    uintptr_t frame[3] = { 0, fn, fn_arg };
+    struct mm_struct *mm = current->mm;
+
+    /* The entry trampoline and a distinct stack make CLONE_VM useful without
+     * borrowing the parent's in-flight syscall frame.  Thread groups are not
+     * represented by proc_struct yet, so reject those flags explicitly. */
+    if ((clone_flags & ~supported) != 0 ||
+        (clone_flags & CLONE_VM) == 0 || mm == NULL ||
+        entry == 0 || fn == 0) {
+        return -E_INVAL;
+    }
+    if (stack < 3 * sizeof(uint32_t) || stack > USERTOP) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    if (!user_mem_check(mm, entry, sizeof(uint32_t), 0) ||
+        !user_mem_check(mm, fn, sizeof(uint32_t), 0) ||
+        !user_mem_check(mm, stack - 3 * sizeof(uint32_t),
+                        3 * sizeof(uint32_t), 1) ||
+        !copy_to_user(mm, (void *)(stack - 3 * sizeof(uint32_t)),
+                      frame, sizeof(frame))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return do_fork_with_entry(clone_flags,
+                              stack - 3 * sizeof(uint32_t), tf, entry);
 }
 
 static int
@@ -54,6 +93,22 @@ sys_kill(uint32_t arg[]) {
 static int
 sys_getpid(uint32_t arg[]) {
     return current->pid;
+}
+
+static int
+sys_getppid(uint32_t arg[]) {
+    return current->parent != NULL ? current->parent->pid : 0;
+}
+
+static int
+sys_gettid(uint32_t arg[]) {
+    /* Each schedulable uCore thread currently has its own proc_struct. */
+    return current->pid;
+}
+
+static int
+sys_getcpu(uint32_t arg[]) {
+    return smp_current_cpu();
 }
 
 static int
@@ -167,11 +222,15 @@ sys_dup(uint32_t arg[]) {
 static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_exit]              sys_exit,
     [SYS_fork]              sys_fork,
+    [SYS_clone]             sys_clone,
     [SYS_wait]              sys_wait,
     [SYS_exec]              sys_exec,
     [SYS_yield]             sys_yield,
     [SYS_kill]              sys_kill,
     [SYS_getpid]            sys_getpid,
+    [SYS_getppid]           sys_getppid,
+    [SYS_gettid]            sys_gettid,
+    [SYS_getcpu]            sys_getcpu,
     [SYS_putc]              sys_putc,
     [SYS_pgdir]             sys_pgdir,
     [SYS_gettime]           sys_gettime,

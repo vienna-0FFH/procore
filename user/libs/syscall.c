@@ -56,6 +56,13 @@ sys_fork(void) {
 }
 
 int
+sys_clone(uint32_t clone_flags, void *child_stack,
+          uintptr_t entry, uintptr_t fn, uintptr_t arg) {
+    return syscall5(SYS_clone, clone_flags, (uintptr_t)child_stack,
+                    entry, fn, arg);
+}
+
+int
 sys_wait(int pid, int *store) {
     return syscall2(SYS_wait, pid, (uintptr_t)store);
 }
@@ -73,6 +80,21 @@ sys_kill(int pid) {
 int
 sys_getpid(void) {
     return syscall0(SYS_getpid);
+}
+
+int
+sys_getppid(void) {
+    return syscall0(SYS_getppid);
+}
+
+int
+sys_gettid(void) {
+    return syscall0(SYS_gettid);
+}
+
+int
+sys_getcpu(void) {
+    return syscall0(SYS_getcpu);
 }
 
 int

@@ -14,9 +14,12 @@
 #define SYS_kill            12
 #define SYS_gettime         17
 #define SYS_getpid          18
+#define SYS_getppid         19
 #define SYS_mmap            20
 #define SYS_munmap          21
 #define SYS_shmem           22
+#define SYS_gettid          23
+#define SYS_getcpu          24
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100

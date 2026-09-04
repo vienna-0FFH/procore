@@ -27,11 +27,16 @@ int fprintf(int fd, const char *fmt, ...);
 
 void __noreturn exit(int error_code);
 int fork(void);
+int clone(int (*fn)(void *), void *child_stack,
+          uint32_t clone_flags, void *arg);
 int wait(void);
 int waitpid(int pid, int *store);
 void yield(void);
 int kill(int pid);
 int getpid(void);
+int getppid(void);
+int gettid(void);
+int getcpu(void);
 void print_pgdir(void);
 int sleep(unsigned int time);
 unsigned int gettime_msec(void);
@@ -46,4 +51,3 @@ int __exec(const char *name, const char **argv);
 void lab6_set_priority(uint32_t priority); //compatibility priority API
 
 #endif /* !__USER_LIBS_ULIB_H__ */
-

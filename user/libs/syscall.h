@@ -3,11 +3,16 @@
 
 int sys_exit(int error_code);
 int sys_fork(void);
+int sys_clone(uint32_t clone_flags, void *child_stack,
+              uintptr_t entry, uintptr_t fn, uintptr_t arg);
 int sys_wait(int pid, int *store);
 int sys_exec(const char *name, int argc, const char **argv);
 int sys_yield(void);
 int sys_kill(int pid);
 int sys_getpid(void);
+int sys_getppid(void);
+int sys_gettid(void);
+int sys_getcpu(void);
 int sys_putc(int c);
 int sys_pgdir(void);
 int sys_sleep(unsigned int time);

@@ -5,6 +5,7 @@
 #include <stat.h>
 #include <string.h>
 #include <lock.h>
+#include <error.h>
 
 static lock_t fork_lock = INIT_LOCK;
 
@@ -30,6 +31,22 @@ fork(void) {
     return sys_fork();
 }
 
+static void __noreturn
+clone_start(int (*fn)(void *), void *arg) {
+    exit(fn(arg));
+}
+
+int
+clone(int (*fn)(void *), void *child_stack,
+      uint32_t clone_flags, void *arg) {
+    if (fn == NULL || child_stack == NULL) {
+        return -E_INVAL;
+    }
+    return sys_clone(clone_flags, child_stack,
+                     (uintptr_t)clone_start, (uintptr_t)fn,
+                     (uintptr_t)arg);
+}
+
 int
 wait(void) {
     return sys_wait(0, NULL);
@@ -53,6 +70,21 @@ kill(int pid) {
 int
 getpid(void) {
     return sys_getpid();
+}
+
+int
+getppid(void) {
+    return sys_getppid();
+}
+
+int
+gettid(void) {
+    return sys_gettid();
+}
+
+int
+getcpu(void) {
+    return sys_getcpu();
 }
 
 //print_pgdir - print the PDT&PT
