@@ -472,17 +472,46 @@ unmap_range(pde_t *pgdir, uintptr_t start, uintptr_t end) {
     assert(start % PGSIZE == 0 && end % PGSIZE == 0);
     assert(USER_ACCESS(start, end));
 
-    do {
-        pte_t *ptep = get_pte(pgdir, start, 0);
-        if (ptep == NULL) {
-            start = ROUNDDOWN(start + PTSIZE, PTSIZE);
-            continue ;
+    while (start < end) {
+        uintptr_t pde_start = ROUNDDOWN(start, PTSIZE);
+        uintptr_t pde_end = pde_start + PTSIZE;
+        uintptr_t limit = (end < pde_end) ? end : pde_end;
+        pde_t *pdep = &pgdir[PDX(start)];
+        if (!(*pdep & PTE_P)) {
+            start = limit;
+            continue;
         }
-        if (*ptep != 0) {
-            page_remove_pte(pgdir, start, ptep);
+        pte_t *pt = (pte_t *)KADDR(PDE_ADDR(*pdep));
+        uintptr_t la = start;
+        while (la < limit) {
+            pte_t *ptep = &pt[PTX(la)];
+            if (*ptep & PTE_P) {
+                page_remove_pte(pgdir, la, ptep);
+            }
+            else if (*ptep != 0) {
+                /* A non-present entry may be a swap slot. */
+                *ptep = 0;
+                tlb_invalidate(pgdir, la);
+            }
+            la += PGSIZE;
         }
-        start += PGSIZE;
-    } while (start != 0 && start < end);
+
+        /* Release a page-table page once the whole PDE is empty.  This keeps
+         * repeated mmap/munmap cycles from leaking one page per 4 MiB region. */
+        bool empty = 1;
+        for (la = 0; la < NPTEENTRY; la++) {
+            if (pt[la] != 0) {
+                empty = 0;
+                break;
+            }
+        }
+        if (empty) {
+            free_page(pde2page(*pdep));
+            *pdep = 0;
+            tlb_invalidate(pgdir, pde_start);
+        }
+        start = limit;
+    }
 }
 
 void

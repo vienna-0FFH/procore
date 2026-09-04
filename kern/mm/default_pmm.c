@@ -75,6 +75,7 @@ default_init_memmap(struct Page *base, size_t n) {
         SetPageProperty(p);
         p->property = 0;
         set_page_ref(p, 0);
+        list_init(&(p->pra_page_link));
         list_add_before(&free_list, &(p->page_link));
     }
     nr_free += n;
@@ -291,4 +292,3 @@ const struct pmm_manager default_pmm_manager = {
     .nr_free_pages = default_nr_free_pages,
     .check = default_check,
 };
-

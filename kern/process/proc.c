@@ -747,6 +747,7 @@ load_icode(int fd, int argc, char **kargv) {
 
     struct proghdr __ph, *ph = &__ph;
     uint32_t vm_flags, perm, phnum;
+    uintptr_t image_brk = USERBASE;
     for (phnum = 0; phnum < elf->e_phnum; phnum ++) {
         off_t phoff = elf->e_phoff + sizeof(struct proghdr) * phnum;
         if ((ret = load_icode_read(fd, ph, sizeof(struct proghdr), phoff)) != 0) {
@@ -758,6 +759,14 @@ load_icode(int fd, int argc, char **kargv) {
         if (ph->p_filesz > ph->p_memsz) {
             ret = -E_INVAL_ELF;
             goto bad_cleanup_mmap;
+        }
+        if (ph->p_va + ph->p_memsz < ph->p_va ||
+            ph->p_va + ph->p_memsz > USERTOP) {
+            ret = -E_INVAL_ELF;
+            goto bad_cleanup_mmap;
+        }
+        if (image_brk < ph->p_va + ph->p_memsz) {
+            image_brk = ph->p_va + ph->p_memsz;
         }
         if (ph->p_filesz == 0) {
             continue ;
@@ -821,6 +830,9 @@ load_icode(int fd, int argc, char **kargv) {
     }
     sysfile_close(fd);
 
+    mm->start_brk = ROUNDUP(image_brk, PGSIZE);
+    mm->brk = mm->start_brk;
+
     vm_flags = VM_READ | VM_WRITE | VM_STACK;
     if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) {
         goto bad_cleanup_mmap;
@@ -830,8 +842,8 @@ load_icode(int fd, int argc, char **kargv) {
     assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-3*PGSIZE , PTE_USER) != NULL);
     assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-4*PGSIZE , PTE_USER) != NULL);
     
-    mm_count_inc(mm);
     current->mm = mm;
+    mm_count_inc(mm);
     current->cr3 = PADDR(mm->pgdir);
     lcr3(PADDR(mm->pgdir));
 

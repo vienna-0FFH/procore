@@ -20,6 +20,7 @@
 #define SYS_shmem           22
 #define SYS_gettid          23
 #define SYS_getcpu          24
+#define SYS_brk             25
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -40,6 +41,20 @@
 #define CLONE_VM            0x00000100  // set if VM shared between processes
 #define CLONE_THREAD        0x00000200  // thread group
 #define CLONE_FS            0x00000800  // set if shared between processes
+
+/* Anonymous mappings; file-backed mappings require a page-cache contract. */
+#define PROT_NONE           0x0
+#define PROT_READ           0x1
+#define PROT_WRITE          0x2
+#define PROT_EXEC           0x4
+#define MAP_SHARED          0x01
+#define MAP_PRIVATE         0x02
+#define MAP_FIXED           0x10
+#define MAP_ANONYMOUS       0x20
+#define MAP_ANON            MAP_ANONYMOUS
+#define MAP_FAILED          ((void *)(uintptr_t)-1)
+/* User-visible page granularity; the kernel's MMU header remains canonical. */
+#define UCORE_PAGE_SIZE     4096
 
 /* VFS flags */
 // flags for open: choose one of these

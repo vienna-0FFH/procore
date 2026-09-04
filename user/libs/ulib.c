@@ -6,6 +6,7 @@
 #include <string.h>
 #include <lock.h>
 #include <error.h>
+#include <unistd.h>
 
 static lock_t fork_lock = INIT_LOCK;
 
@@ -85,6 +86,22 @@ gettid(void) {
 int
 getcpu(void) {
     return sys_getcpu();
+}
+
+void *
+mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
+    int ret = sys_mmap(addr, len, prot, flags);
+    return (ret < 0) ? MAP_FAILED : (void *)(uintptr_t)ret;
+}
+
+int
+munmap(void *addr, size_t len) {
+    return sys_munmap(addr, len);
+}
+
+uintptr_t
+brk(uintptr_t newbrk) {
+    return (uintptr_t)sys_brk(newbrk);
 }
 
 //print_pgdir - print the PDT&PT

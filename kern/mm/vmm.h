@@ -38,6 +38,9 @@ struct mm_struct {
     volatile int mm_count;          // the number of processes sharing the mm
     semaphore_t mm_sem;            // mutex for using dup_mmap fun to duplicat the mm 
     int locked_by;                 // the lock owner process's pid
+    uintptr_t start_brk;            // first address available to the heap
+    uintptr_t brk;                  // current program break
+    struct vma_struct *brk_vma;     // lazy heap mapping, when it exists
 
 };
 
@@ -57,7 +60,7 @@ int mm_unmap(struct mm_struct *mm, uintptr_t addr, size_t len);
 int dup_mmap(struct mm_struct *to, struct mm_struct *from);
 void exit_mmap(struct mm_struct *mm);
 uintptr_t get_unmapped_area(struct mm_struct *mm, size_t len);
-int mm_brk(struct mm_struct *mm, uintptr_t addr, size_t len);
+int mm_brk(struct mm_struct *mm, uintptr_t newbrk);
 
 extern volatile unsigned int pgfault_num;
 extern struct mm_struct *check_mm_struct;

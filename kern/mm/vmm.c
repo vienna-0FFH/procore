@@ -49,6 +49,9 @@ mm_create(void) {
         mm->mmap_cache = NULL;
         mm->pgdir = NULL;
         mm->map_count = 0;
+        mm->start_brk = USERBASE;
+        mm->brk = USERBASE;
+        mm->brk_vma = NULL;
 
         if (swap_init_ok) swap_init_mm(mm);
         else mm->sm_priv = NULL;
@@ -159,18 +162,30 @@ mm_destroy(struct mm_struct *mm) {
 int
 mm_map(struct mm_struct *mm, uintptr_t addr, size_t len, uint32_t vm_flags,
        struct vma_struct **vma_store) {
-    uintptr_t start = ROUNDDOWN(addr, PGSIZE), end = ROUNDUP(addr + len, PGSIZE);
-    if (!USER_ACCESS(start, end)) {
+    uintptr_t start, end;
+    if (mm == NULL || len == 0 || addr + len < addr ||
+        (vm_flags & ~(VM_READ | VM_WRITE | VM_EXEC | VM_STACK)) != 0) {
         return -E_INVAL;
     }
-
-    assert(mm != NULL);
+    start = ROUNDDOWN(addr, PGSIZE);
+    end = ROUNDUP(addr + len, PGSIZE);
+    if (end <= start || !USER_ACCESS(start, end)) {
+        return -E_INVAL;
+    }
 
     int ret = -E_INVAL;
 
     struct vma_struct *vma;
-    if ((vma = find_vma(mm, start)) != NULL && end > vma->vm_start) {
-        goto out;
+    list_entry_t *list = &(mm->mmap_list), *le = list;
+    while ((le = list_next(le)) != list) {
+        vma = le2vma(le, list_link);
+        if (vma->vm_end <= start) {
+            continue;
+        }
+        if (vma->vm_start < end) {
+            return -E_INVAL;
+        }
+        break;
     }
     ret = -E_NO_MEM;
 
@@ -187,9 +202,206 @@ out:
     return ret;
 }
 
+/* Find a page-aligned hole below the fixed user stack reservation.  The
+ * caller holds mm->mm_sem when this is used for a live address space. */
+uintptr_t
+get_unmapped_area(struct mm_struct *mm, size_t len) {
+    uintptr_t candidate = USERBASE;
+    uintptr_t limit = USTACKTOP - USTACKSIZE;
+    uintptr_t size;
+    list_entry_t *list, *le;
+
+    if (mm == NULL || len == 0 ||
+        len > (uintptr_t)-1 - (PGSIZE - 1)) {
+        return 0;
+    }
+    size = ROUNDUP(len, PGSIZE);
+    if (size == 0 || size > limit - USERBASE) {
+        return 0;
+    }
+    list = &(mm->mmap_list);
+    le = list_next(list);
+    while (le != list) {
+        struct vma_struct *vma = le2vma(le, list_link);
+        if (vma->vm_end <= candidate) {
+            le = list_next(le);
+            continue;
+        }
+        if (vma->vm_start >= candidate &&
+            vma->vm_start - candidate >= size &&
+            candidate + size <= limit) {
+            return candidate;
+        }
+        if (vma->vm_end > candidate) {
+            candidate = ROUNDUP(vma->vm_end, PGSIZE);
+        }
+        if (candidate > limit || size > limit - candidate) {
+            return 0;
+        }
+        le = list_next(le);
+    }
+    return (candidate <= limit && size <= limit - candidate) ? candidate : 0;
+}
+
+static inline void
+mm_unmap_pages(struct mm_struct *mm, uintptr_t start, uintptr_t end) {
+    if (start < end) {
+        uintptr_t addr;
+        for (addr = start; addr < end; addr += PGSIZE) {
+            if (swap_init_ok) {
+                swap_set_unswappable(mm, addr);
+            }
+        }
+        unmap_range(mm->pgdir, start, end);
+    }
+}
+
+int
+mm_unmap(struct mm_struct *mm, uintptr_t addr, size_t len) {
+    uintptr_t start, end;
+    list_entry_t *list, *le;
+
+    if (mm == NULL || len == 0 || (addr & (PGSIZE - 1)) != 0 ||
+        addr + len < addr) {
+        return -E_INVAL;
+    }
+    start = addr;
+    end = ROUNDUP(addr + len, PGSIZE);
+    if (end <= start || !USER_ACCESS(start, end)) {
+        return -E_INVAL;
+    }
+    list = &(mm->mmap_list);
+    le = list_next(list);
+    while (le != list) {
+        struct vma_struct *vma = le2vma(le, list_link);
+        list_entry_t *next = list_next(le);
+        uintptr_t cut_start, cut_end;
+        if (vma->vm_end <= start) {
+            le = next;
+            continue;
+        }
+        if (vma->vm_start >= end) {
+            break;
+        }
+        cut_start = (start > vma->vm_start) ? start : vma->vm_start;
+        cut_end = (end < vma->vm_end) ? end : vma->vm_end;
+        if (cut_start < cut_end) {
+            uintptr_t old_start = vma->vm_start;
+            uintptr_t old_end = vma->vm_end;
+            mm_unmap_pages(mm, cut_start, cut_end);
+            if (cut_start == old_start && cut_end == old_end) {
+                if (mm->brk_vma == vma) {
+                    mm->brk_vma = NULL;
+                }
+                if (mm->mmap_cache == vma) {
+                    mm->mmap_cache = NULL;
+                }
+                list_del_init(le);
+                mm->map_count--;
+                kfree(vma);
+            }
+            else if (cut_start == old_start) {
+                vma->vm_start = cut_end;
+                if (mm->brk_vma == vma &&
+                    vma->vm_start != ROUNDUP(mm->start_brk, PGSIZE)) {
+                    mm->brk_vma = NULL;
+                }
+            }
+            else if (cut_end == old_end) {
+                vma->vm_end = cut_start;
+                if (mm->brk_vma == vma && vma->vm_end < mm->brk) {
+                    mm->brk = vma->vm_end;
+                }
+            }
+            else {
+                struct vma_struct *right =
+                    vma_create(cut_end, old_end, vma->vm_flags);
+                if (right == NULL) {
+                    return -E_NO_MEM;
+                }
+                right->vm_mm = mm;
+                list_add_after(le, &(right->list_link));
+                mm->map_count++;
+                vma->vm_end = cut_start;
+                if (mm->brk_vma == vma) {
+                    mm->brk_vma = NULL;
+                }
+            }
+        }
+        le = next;
+    }
+    return 0;
+}
+
+int
+mm_brk(struct mm_struct *mm, uintptr_t newbrk) {
+    uintptr_t old_end, new_end, heap_start;
+    struct vma_struct *vma;
+
+    if (mm == NULL || newbrk < mm->start_brk || newbrk > USERTOP) {
+        return -E_INVAL;
+    }
+    old_end = ROUNDUP(mm->brk, PGSIZE);
+    new_end = ROUNDUP(newbrk, PGSIZE);
+    heap_start = ROUNDUP(mm->start_brk, PGSIZE);
+    if (new_end == old_end) {
+        mm->brk = newbrk;
+        return 0;
+    }
+    if (new_end < old_end) {
+        if (mm->brk_vma != NULL) {
+            vma = mm->brk_vma;
+            mm_unmap_pages(mm, new_end, old_end);
+            if (new_end <= heap_start) {
+                list_del_init(&(vma->list_link));
+                mm->map_count--;
+                mm->brk_vma = NULL;
+                if (mm->mmap_cache == vma) {
+                    mm->mmap_cache = NULL;
+                }
+                kfree(vma);
+            }
+            else {
+                vma->vm_end = new_end;
+            }
+        }
+        mm->brk = newbrk;
+        return 0;
+    }
+    if (new_end > USERTOP || new_end < heap_start) {
+        return -E_INVAL;
+    }
+    if (mm->brk_vma == NULL) {
+        if (old_end != heap_start ||
+            mm_map(mm, heap_start, new_end - heap_start,
+                   VM_READ | VM_WRITE, &(mm->brk_vma)) != 0) {
+            return -E_INVAL;
+        }
+    }
+    else {
+        vma = mm->brk_vma;
+        if (vma->vm_end != old_end) {
+            return -E_INVAL;
+        }
+        if (list_next(&(vma->list_link)) != &(mm->mmap_list)) {
+            struct vma_struct *next =
+                le2vma(list_next(&(vma->list_link)), list_link);
+            if (next->vm_start < new_end) {
+                return -E_INVAL;
+            }
+        }
+        vma->vm_end = new_end;
+    }
+    mm->brk = newbrk;
+    return 0;
+}
+
 int
 dup_mmap(struct mm_struct *to, struct mm_struct *from) {
     assert(to != NULL && from != NULL);
+    to->start_brk = from->start_brk;
+    to->brk = from->brk;
+    to->brk_vma = NULL;
     list_entry_t *list = &(from->mmap_list), *le = list;
     while ((le = list_prev(le)) != list) {
         struct vma_struct *vma, *nvma;
@@ -200,6 +412,10 @@ dup_mmap(struct mm_struct *to, struct mm_struct *from) {
         }
 
         insert_vma_struct(to, nvma);
+
+        if (from->brk_vma == vma) {
+            to->brk_vma = nvma;
+        }
 
         bool share = 0;
         if (copy_range(to->pgdir, from->pgdir, vma->vm_start, vma->vm_end, share) != 0) {
@@ -216,7 +432,7 @@ exit_mmap(struct mm_struct *mm) {
     list_entry_t *list = &(mm->mmap_list), *le = list;
     while ((le = list_next(le)) != list) {
         struct vma_struct *vma = le2vma(le, list_link);
-        unmap_range(pgdir, vma->vm_start, vma->vm_end);
+        mm_unmap_pages(mm, vma->vm_start, vma->vm_end);
     }
     while ((le = list_next(le)) != list) {
         struct vma_struct *vma = le2vma(le, list_link);
@@ -551,7 +767,7 @@ user_mem_check(struct mm_struct *mm, uintptr_t addr, size_t len, bool write) {
             if ((vma = find_vma(mm, start)) == NULL || start < vma->vm_start) {
                 return 0;
             }
-            if (!(vma->vm_flags & ((write) ? VM_WRITE : VM_READ))) {
+            if (!(vma->vm_flags & ((write) ? VM_WRITE : (VM_READ | VM_EXEC)))) {
                 return 0;
             }
             if (write && (vma->vm_flags & VM_STACK)) {

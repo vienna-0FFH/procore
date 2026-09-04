@@ -5,6 +5,7 @@
 #include <swap.h>
 #include <swap_fifo.h>
 #include <list.h>
+#include <error.h>
 
 /* [wikipedia]The simplest Page Replacement Algorithm(PRA) is a FIFO algorithm. The first-in, first-out
  * page replacement algorithm is a low-overhead algorithm that requires little book-keeping on
@@ -48,6 +49,9 @@ _fifo_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int
     list_entry_t *entry=&(page->pra_page_link);
  
     assert(entry != NULL && head != NULL);
+    if (!list_empty(entry)) {
+        return 0;
+    }
     //record the page access situlation
     /*core implementation 2: implementation*/ 
     //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
@@ -72,7 +76,7 @@ _fifo_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick
      list_entry_t *le = head->prev;
      assert(head!=le);
      struct Page *p = le2page(le, pra_page_link);
-     list_del(le);
+     list_del_init(le);
      assert(p !=NULL);
      *ptr_page = p;
      return 0;
@@ -130,6 +134,16 @@ _fifo_init(void)
 static int
 _fifo_set_unswappable(struct mm_struct *mm, uintptr_t addr)
 {
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    pte_t *ptep = get_pte(mm->pgdir, addr, 0);
+    if (ptep != NULL && (*ptep & PTE_P)) {
+        struct Page *page = pte2page(*ptep);
+        if (!list_empty(&(page->pra_page_link))) {
+            list_del_init(&(page->pra_page_link));
+        }
+    }
     return 0;
 }
 

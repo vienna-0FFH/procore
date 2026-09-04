@@ -98,6 +98,21 @@ sys_getcpu(void) {
 }
 
 int
+sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
+    return syscall4(SYS_mmap, (uintptr_t)addr, len, prot, flags);
+}
+
+int
+sys_munmap(void *addr, size_t len) {
+    return syscall2(SYS_munmap, (uintptr_t)addr, len);
+}
+
+int
+sys_brk(uintptr_t newbrk) {
+    return syscall1(SYS_brk, newbrk);
+}
+
+int
 sys_putc(int c) {
     return syscall1(SYS_putc, c);
 }

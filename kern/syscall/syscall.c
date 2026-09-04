@@ -112,6 +112,78 @@ sys_getcpu(uint32_t arg[]) {
 }
 
 static int
+sys_mmap(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uintptr_t hint = arg[0];
+    size_t len = (size_t)arg[1];
+    uint32_t prot = arg[2];
+    uint32_t flags = arg[3];
+    uintptr_t start;
+    int ret;
+
+    if (mm == NULL || len == 0 ||
+        (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0 ||
+        (flags & ~(MAP_SHARED | MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS)) != 0 ||
+        (flags & MAP_ANONYMOUS) == 0 ||
+        ((flags & (MAP_SHARED | MAP_PRIVATE)) ==
+         (MAP_SHARED | MAP_PRIVATE))) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    if ((flags & MAP_FIXED) != 0) {
+        if ((hint & (PGSIZE - 1)) != 0 || hint + len < hint ||
+            !USER_ACCESS(hint, ROUNDUP(hint + len, PGSIZE))) {
+            ret = -E_INVAL;
+            goto out_unlock;
+        }
+        start = hint;
+    }
+    else {
+        start = get_unmapped_area(mm, len);
+        if (start == 0) {
+            ret = -E_NO_MEM;
+            goto out_unlock;
+        }
+    }
+    ret = mm_map(mm, start, len, prot, NULL);
+    if (ret == 0) {
+        ret = (int)start;
+    }
+out_unlock:
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_munmap(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    int ret;
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    ret = mm_unmap(mm, (uintptr_t)arg[0], (size_t)arg[1]);
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_brk(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uintptr_t oldbrk;
+    int ret;
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    oldbrk = mm->brk;
+    ret = mm_brk(mm, (uintptr_t)arg[0]);
+    ret = (ret == 0) ? (int)mm->brk : (int)oldbrk;
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
 sys_putc(uint32_t arg[]) {
     int c = (int)arg[0];
     cputchar(c);
@@ -231,6 +303,9 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_getppid]           sys_getppid,
     [SYS_gettid]            sys_gettid,
     [SYS_getcpu]            sys_getcpu,
+    [SYS_mmap]              sys_mmap,
+    [SYS_munmap]            sys_munmap,
+    [SYS_brk]               sys_brk,
     [SYS_putc]              sys_putc,
     [SYS_pgdir]             sys_pgdir,
     [SYS_gettime]           sys_gettime,
