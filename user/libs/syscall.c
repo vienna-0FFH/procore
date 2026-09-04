@@ -142,6 +142,11 @@ sys_fsync(int fd) {
 }
 
 int
+sys_chdir(const char *path) {
+    return syscall1(SYS_chdir, (uintptr_t)path);
+}
+
+int
 sys_getcwd(char *buffer, size_t len) {
     return syscall2(SYS_getcwd, (uintptr_t)buffer, len);
 }

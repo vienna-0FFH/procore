@@ -23,6 +23,7 @@ int sys_write(int fd, void *base, size_t len);
 int sys_seek(int fd, off_t pos, int whence);
 int sys_fstat(int fd, struct stat *stat);
 int sys_fsync(int fd);
+int sys_chdir(const char *path);
 int sys_getcwd(char *buffer, size_t len);
 int sys_getdirentry(int fd, struct dirent *dirent);
 int sys_dup(int fd1, int fd2);
@@ -30,4 +31,3 @@ void sys_lab6_set_priority(uint32_t priority); //compatibility priority API
 
 
 #endif /* !__USER_LIBS_SYSCALL_H__ */
-

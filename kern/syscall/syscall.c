@@ -138,6 +138,12 @@ sys_fsync(uint32_t arg[]) {
 }
 
 static int
+sys_chdir(uint32_t arg[]) {
+    const char *path = (const char *)arg[0];
+    return sysfile_chdir(path);
+}
+
+static int
 sys_getcwd(uint32_t arg[]) {
     char *buf = (char *)arg[0];
     size_t len = (size_t)arg[1];
@@ -178,6 +184,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_seek]              sys_seek,
     [SYS_fstat]             sys_fstat,
     [SYS_fsync]             sys_fsync,
+    [SYS_chdir]             sys_chdir,
     [SYS_getcwd]            sys_getcwd,
     [SYS_getdirentry]       sys_getdirentry,
     [SYS_dup]               sys_dup,

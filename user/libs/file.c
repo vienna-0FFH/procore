@@ -46,6 +46,11 @@ dup2(int fd1, int fd2) {
     return sys_dup(fd1, fd2);
 }
 
+int
+dup(int fd) {
+    return sys_dup(fd, NO_FD);
+}
+
 static char
 transmode(struct stat *stat) {
     uint32_t mode = stat->st_mode;
@@ -65,4 +70,3 @@ print_stat(const char *name, int fd, struct stat *stat) {
     cprintf("    blocks  : %lu\n", stat->st_blocks);
     cprintf("    size    : %lu\n", stat->st_size);
 }
-
