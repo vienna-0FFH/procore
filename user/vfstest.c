@@ -15,11 +15,11 @@ main(void) {
     struct stat st;
     int fd;
 
-    assert(mkdir("/__vfs_case") == 0);
+    assert(mkdir("disk0:/__vfs_case") == 0);
     assert(mkdir("/__vfs_case/sub") == 0);
     assert(mkdir("/__vfs_case/sub") == -E_EXISTS);
 
-    fd = open("/__vfs_case//sub/./file", O_RDWR | O_CREAT);
+    fd = open("disk0:/__vfs_case//sub/./file", O_RDWR | O_CREAT);
     assert(fd >= 0);
     assert(write(fd, (void *)payload, sizeof(payload)) == sizeof(payload));
     assert(seek(fd, 0, LSEEK_SET) == 0);

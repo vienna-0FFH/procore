@@ -28,12 +28,20 @@ get_device(char *path, char **subpath, struct inode **node_store) {
     }
     if (colon > 0) {
         /* device:path - get root of device's filesystem */
-        path[colon] = '\0';
+        int device_end = colon;
+        path[device_end] = '\0';
 
         /* device:/path - skip slash, treat as device:path */
-        while (path[++ colon] == '/');
-        *subpath = path + colon;
-        return vfs_get_root(path, node_store);
+        int subpath_start = device_end + 1;
+        while (path[subpath_start] == '/') {
+            subpath_start++;
+        }
+        *subpath = path + subpath_start;
+        int ret = vfs_get_root(path, node_store);
+        /* Callers may need to parse the same buffer again (for example,
+         * vfs_open retries with vfs_lookup_parent after O_CREAT). */
+        path[device_end] = ':';
+        return ret;
     }
 
     /* *
