@@ -429,6 +429,22 @@ copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf) {
     proc->context.esp = (uintptr_t)(proc->tf);
 }
 
+/* Build a child context for clone's user entry trampoline.  The child starts
+ * at the supplied entry address with a private user stack; unlike fork it must
+ * not resume in the parent's in-flight syscall frame. */
+static void
+copy_clone_thread(struct proc_struct *proc, uintptr_t stack,
+                  uintptr_t entry, struct trapframe *parent_tf) {
+    proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE) - 1;
+    *(proc->tf) = *parent_tf;
+    proc->tf->tf_regs.reg_eax = 0;
+    proc->tf->tf_esp = stack;
+    proc->tf->tf_eip = entry;
+    proc->tf->tf_eflags |= FL_IF;
+    proc->context.eip = (uintptr_t)forkret;
+    proc->context.esp = (uintptr_t)(proc->tf);
+}
+
 //copy_fs&put_fs function used by do_fork in core
 static int
 copy_fs(uint32_t clone_flags, struct proc_struct *proc) {
@@ -558,9 +574,11 @@ do_fork_with_entry(uint32_t clone_flags, uintptr_t stack,
     if (copy_mm(clone_flags, proc) != 0) {
         goto bad_fork_cleanup_fs;
     }
-    copy_thread(proc, stack, tf);
     if (entry != 0) {
-        proc->tf->tf_eip = entry;
+        copy_clone_thread(proc, stack, entry, tf);
+    }
+    else {
+        copy_thread(proc, stack, tf);
     }
 
     local_intr_save(intr_flag);
