@@ -125,5 +125,13 @@ int sfs_clear_block(struct sfs_fs *sfs, uint32_t blkno, uint32_t nblks);
 
 int sfs_load_inode(struct sfs_fs *sfs, struct inode **node_store, uint32_t ino);
 
-#endif /* !__KERN_FS_SFS_SFS_H__ */
+/* Namespace operations used by the VFS pathname layer. */
+int sfs_create(struct inode *dir, const char *name, bool excl,
+               struct inode **node_store);
+int sfs_mkdir(struct inode *dir, const char *name);
+int sfs_link(struct inode *dir, const char *name, struct inode *target);
+int sfs_unlink(struct inode *dir, const char *name);
+int sfs_rename(struct inode *old_dir, const char *old_name,
+               struct inode *new_dir, const char *new_name);
 
+#endif /* !__KERN_FS_SFS_SFS_H__ */

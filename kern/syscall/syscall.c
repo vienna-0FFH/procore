@@ -271,6 +271,32 @@ sys_chdir(uint32_t arg[]) {
 }
 
 static int
+sys_mkdir(uint32_t arg[]) {
+    const char *path = (const char *)arg[0];
+    return sysfile_mkdir(path);
+}
+
+static int
+sys_link(uint32_t arg[]) {
+    const char *old_path = (const char *)arg[0];
+    const char *new_path = (const char *)arg[1];
+    return sysfile_link(old_path, new_path);
+}
+
+static int
+sys_unlink(uint32_t arg[]) {
+    const char *path = (const char *)arg[0];
+    return sysfile_unlink(path);
+}
+
+static int
+sys_rename(uint32_t arg[]) {
+    const char *old_path = (const char *)arg[0];
+    const char *new_path = (const char *)arg[1];
+    return sysfile_rename(old_path, new_path);
+}
+
+static int
 sys_getcwd(uint32_t arg[]) {
     char *buf = (char *)arg[0];
     size_t len = (size_t)arg[1];
@@ -319,6 +345,10 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_fstat]             sys_fstat,
     [SYS_fsync]             sys_fsync,
     [SYS_chdir]             sys_chdir,
+    [SYS_mkdir]             sys_mkdir,
+    [SYS_link]              sys_link,
+    [SYS_unlink]            sys_unlink,
+    [SYS_rename]            sys_rename,
     [SYS_getcwd]            sys_getcwd,
     [SYS_getdirentry]       sys_getdirentry,
     [SYS_dup]               sys_dup,

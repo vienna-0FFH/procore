@@ -45,6 +45,26 @@ chdir(const char *path) {
 }
 
 int
+mkdir(const char *path) {
+    return sys_mkdir(path);
+}
+
+int
+link(const char *old_path, const char *new_path) {
+    return sys_link(old_path, new_path);
+}
+
+int
+unlink(const char *path) {
+    return sys_unlink(path);
+}
+
+int
+rename(const char *old_path, const char *new_path) {
+    return sys_rename(old_path, new_path);
+}
+
+int
 getcwd(char *buffer, size_t len) {
     return sys_getcwd(buffer, len);
 }

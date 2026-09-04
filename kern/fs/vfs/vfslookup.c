@@ -75,10 +75,41 @@ vfs_lookup(char *path, struct inode **node_store) {
     if ((ret = get_device(path, &path, &node)) != 0) {
         return ret;
     }
-    if (*path != '\0') {
-        ret = vop_lookup(node, path, node_store);
+    while (*path != '\0') {
+        char *component;
+        char *separator;
+        struct inode *next;
+
+        /* Repeated separators do not name an additional component. */
+        while (*path == '/') {
+            path++;
+        }
+        if (*path == '\0') {
+            break;
+        }
+
+        component = path;
+        while (*path != '\0' && *path != '/') {
+            path++;
+        }
+        if ((size_t)(path - component) > FS_MAX_FNAME_LEN) {
+            vop_ref_dec(node);
+            return -E_TOO_BIG;
+        }
+        separator = (*path != '\0') ? path : NULL;
+        if (separator != NULL) {
+            *path++ = '\0';
+        }
+
+        ret = vop_lookup(node, component, &next);
+        if (separator != NULL) {
+            *separator = '/';
+        }
         vop_ref_dec(node);
-        return ret;
+        if (ret != 0) {
+            return ret;
+        }
+        node = next;
     }
     *node_store = node;
     return 0;
@@ -95,7 +126,59 @@ vfs_lookup_parent(char *path, struct inode **node_store, char **endp){
     if ((ret = get_device(path, &path, &node)) != 0) {
         return ret;
     }
-    *endp = path;
-    *node_store = node;
-    return 0;
+
+    /* Locate the final component while resolving every preceding component.
+     * The caller owns the returned parent reference and may mutate the final
+     * component in-place, which is why PATH is deliberately non-const. */
+    while (*path == '/') {
+        path++;
+    }
+    if (*path == '\0') {
+        vop_ref_dec(node);
+        return -E_INVAL;
+    }
+
+    for (;;) {
+        char *component = path;
+        char *slash = component;
+        struct inode *next;
+
+        while (*slash != '\0' && *slash != '/') {
+            slash++;
+        }
+        if (*slash == '\0') {
+            if ((size_t)(slash - component) > FS_MAX_FNAME_LEN) {
+                vop_ref_dec(node);
+                return -E_TOO_BIG;
+            }
+            *endp = component;
+            *node_store = node;
+            return 0;
+        }
+
+        /* Skip all separators after this component.  If they lead to the
+         * end, the component is still the basename ("file/" semantics). */
+        char *next_component = slash;
+        while (*next_component == '/') {
+            next_component++;
+        }
+        if ((size_t)(slash - component) > FS_MAX_FNAME_LEN) {
+            vop_ref_dec(node);
+            return -E_TOO_BIG;
+        }
+        *slash = '\0';
+        if (*next_component == '\0') {
+            *endp = component;
+            *node_store = node;
+            return 0;
+        }
+
+        ret = vop_lookup(node, component, &next);
+        vop_ref_dec(node);
+        if (ret != 0) {
+            return ret;
+        }
+        node = next;
+        path = next_component;
+    }
 }

@@ -34,6 +34,10 @@
 #define SYS_getcwd          121
 #define SYS_getdirentry     128
 #define SYS_dup             130
+#define SYS_mkdir           131
+#define SYS_link            132
+#define SYS_unlink          133
+#define SYS_rename          134
 /* OLNY FOR core */
 #define SYS_lab6_set_priority 255
 

@@ -184,6 +184,26 @@ sys_chdir(const char *path) {
 }
 
 int
+sys_mkdir(const char *path) {
+    return syscall1(SYS_mkdir, (uintptr_t)path);
+}
+
+int
+sys_link(const char *old_path, const char *new_path) {
+    return syscall2(SYS_link, (uintptr_t)old_path, (uintptr_t)new_path);
+}
+
+int
+sys_unlink(const char *path) {
+    return syscall1(SYS_unlink, (uintptr_t)path);
+}
+
+int
+sys_rename(const char *old_path, const char *new_path) {
+    return syscall2(SYS_rename, (uintptr_t)old_path, (uintptr_t)new_path);
+}
+
+int
 sys_getcwd(char *buffer, size_t len) {
     return syscall2(SYS_getcwd, (uintptr_t)buffer, len);
 }
