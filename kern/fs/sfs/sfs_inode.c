@@ -524,6 +524,56 @@ sfs_dirent_unlink_nolock(struct sfs_fs *sfs, struct sfs_inode *dir,
     return 0;
 }
 
+/* Replace an existing directory entry while updating both inode link counts.
+ * The caller holds the filesystem and directory/target inode locks. */
+static int
+sfs_dirent_replace_nolock(struct sfs_fs *sfs, struct sfs_inode *dir,
+                          int slot, struct sfs_inode *old_target,
+                          struct sfs_inode *new_target, const char *name) {
+    struct sfs_disk_entry entry;
+    uint32_t blkno;
+    int ret;
+
+    if (slot < 0 || name == NULL || name[0] == '\0' ||
+        strlen(name) > SFS_MAX_FNAME_LEN || strchr(name, '/') != NULL ||
+        old_target == NULL || new_target == NULL || old_target == new_target) {
+        return -E_INVAL;
+    }
+    if ((ret = sfs_bmap_get_nolock(sfs, dir, (uint32_t)slot, 0, &blkno)) != 0 ||
+        blkno == 0) {
+        return ret != 0 ? ret : -E_NOENT;
+    }
+    if (old_target->din->nlinks == 0) {
+        return -E_INVAL;
+    }
+    memset(&entry, 0, sizeof(entry));
+    entry.ino = new_target->ino;
+    strcpy(entry.name, name);
+    if ((ret = sfs_wbuf(sfs, &entry, sizeof(entry), blkno, 0)) != 0) {
+        return ret;
+    }
+    old_target->din->nlinks--;
+    new_target->din->nlinks++;
+    old_target->dirty = 1;
+    new_target->dirty = 1;
+    dir->dirty = 1;
+    return 0;
+}
+
+/* Update a directory child's ".." entry when it moves between parents. */
+static int
+sfs_dirent_set_parent_nolock(struct sfs_fs *sfs, struct sfs_inode *child,
+                             struct sfs_inode *old_parent,
+                             struct sfs_inode *new_parent) {
+    if (child == NULL || old_parent == NULL || new_parent == NULL ||
+        child->din->type != SFS_TYPE_DIR || old_parent == new_parent ||
+        child->din->blocks <= SFS_DIR_DOTDOT_SLOT) {
+        return -E_INVAL;
+    }
+    return sfs_dirent_replace_nolock(sfs, child, SFS_DIR_DOTDOT_SLOT,
+                                     old_parent, new_parent, "..");
+}
+
 /*
  * sfs_dirent_findino_nolock - read all file entries in DIR's inode and find a entry->ino == ino
  */
@@ -566,6 +616,41 @@ sfs_lookup_once(struct sfs_fs *sfs, struct sfs_inode *sin, const char *name, str
     return ret;
 }
 
+/* Return whether START is TARGET or one of TARGET's descendants.  Namespace
+ * operations are serialized by mutex_sem, so following the on-disk ".."
+ * chain here cannot race a concurrent rename. */
+static bool
+sfs_dir_reaches(struct sfs_fs *sfs, struct sfs_inode *start, uint32_t target_ino) {
+    struct inode *cursor = info2node(start, sfs_inode);
+    uint32_t cursor_ino = start->ino;
+    uint32_t steps = sfs->super.blocks;
+
+    vop_ref_inc(cursor);
+    while (steps-- != 0) {
+        struct inode *parent;
+        uint32_t parent_ino;
+        if (cursor_ino == target_ino) {
+            vop_ref_dec(cursor);
+            return 1;
+        }
+        if (sfs_lookup_once(sfs, vop_info(cursor, sfs_inode), "..",
+                            &parent, NULL) != 0) {
+            vop_ref_dec(cursor);
+            return 0;
+        }
+        parent_ino = vop_info(parent, sfs_inode)->ino;
+        vop_ref_dec(cursor);
+        if (parent_ino == cursor_ino) {
+            vop_ref_dec(parent);
+            return 0;
+        }
+        cursor = parent;
+        cursor_ino = parent_ino;
+    }
+    vop_ref_dec(cursor);
+    return 0;
+}
+
 static int
 sfs_new_inode(struct sfs_fs *sfs, uint16_t type, struct inode **node_store) {
     struct sfs_disk_inode *din;
@@ -601,7 +686,7 @@ static bool
 sfs_dir_empty_nolock(struct sfs_fs *sfs, struct sfs_inode *dir) {
     struct sfs_disk_entry entry;
     int i;
-    for (i = 2; i < (int)dir->din->blocks; i ++) {
+    for (i = SFS_DIR_FIRST_ENTRY; i < (int)dir->din->blocks; i ++) {
         if (sfs_dirent_read_nolock(sfs, dir, i, &entry) != 0) {
             return 0;
         }
@@ -690,12 +775,14 @@ sfs_mkdir(struct inode *dir, const char *name) {
         if (ret == 0) {
             snew = vop_info(node, sfs_inode);
             lock_sin(snew);
-            ret = sfs_dirent_link_nolock(sfs, snew, 0, snew, ".");
+            ret = sfs_dirent_link_nolock(sfs, snew, SFS_DIR_DOT_SLOT,
+                                         snew, ".");
             if (ret == 0) {
                 dot_linked = 1;
             }
             if (ret == 0) {
-                ret = sfs_dirent_link_nolock(sfs, snew, 1, sdir, "..");
+                ret = sfs_dirent_link_nolock(sfs, snew, SFS_DIR_DOTDOT_SLOT,
+                                             sdir, "..");
                 if (ret == 0) {
                     dotdot_linked = 1;
                 }
@@ -711,10 +798,12 @@ sfs_mkdir(struct inode *dir, const char *name) {
                     (void)sfs_dirent_unlink_nolock(sfs, sdir, slot, snew);
                 }
                 if (dotdot_linked) {
-                    (void)sfs_dirent_unlink_nolock(sfs, snew, 1, sdir);
+                    (void)sfs_dirent_unlink_nolock(sfs, snew,
+                                                   SFS_DIR_DOTDOT_SLOT, sdir);
                 }
                 if (dot_linked) {
-                    (void)sfs_dirent_unlink_nolock(sfs, snew, 0, snew);
+                    (void)sfs_dirent_unlink_nolock(sfs, snew,
+                                                   SFS_DIR_DOT_SLOT, snew);
                 }
             }
             unlock_sin(snew);
@@ -808,8 +897,10 @@ sfs_unlink(struct inode *dir, const char *name) {
         else {
             ret = sfs_dirent_unlink_nolock(sfs, sdir, slot, starget);
             if (ret == 0 && starget->din->type == SFS_TYPE_DIR) {
-                (void)sfs_dirent_unlink_nolock(sfs, starget, 1, sdir);
-                (void)sfs_dirent_unlink_nolock(sfs, starget, 0, starget);
+                (void)sfs_dirent_unlink_nolock(sfs, starget,
+                                               SFS_DIR_DOTDOT_SLOT, sdir);
+                (void)sfs_dirent_unlink_nolock(sfs, starget,
+                                               SFS_DIR_DOT_SLOT, starget);
             }
         }
         unlock_sin(starget);
@@ -831,6 +922,7 @@ sfs_rename(struct inode *old_dir, const char *old_name,
     struct inode *target = NULL;
     struct sfs_disk_entry entry;
     uint32_t blkno, ino;
+    bool cycle = 0;
     int old_slot, new_slot, ret;
 
     if (old_dir == NULL || new_dir == NULL || old_name == NULL ||
@@ -858,6 +950,10 @@ sfs_rename(struct inode *old_dir, const char *old_name,
     if (ret == 0) {
         ret = sfs_load_inode(sfs, &target, ino);
     }
+    if (ret == 0 && snew != sold &&
+        vop_info(target, sfs_inode)->din->type == SFS_TYPE_DIR) {
+        cycle = sfs_dir_reaches(sfs, snew, vop_info(target, sfs_inode)->ino);
+    }
     lock_sfs_fs(sfs);
     lock_sin(sold);
     if (snew != sold) {
@@ -870,8 +966,8 @@ sfs_rename(struct inode *old_dir, const char *old_name,
     else if (ret == 0) {
         starget = vop_info(target, sfs_inode);
         lock_sin(starget);
-        if (starget->din->type == SFS_TYPE_DIR) {
-            ret = -E_UNIMP;
+        if (cycle) {
+            ret = -E_INVAL;
         }
         else {
             ret = sfs_dirent_search_nolock(sfs, snew, new_name,
@@ -887,6 +983,29 @@ sfs_rename(struct inode *old_dir, const char *old_name,
                     strcpy(entry.name, new_name);
                     if (ret == 0) {
                         ret = sfs_wbuf(sfs, &entry, sizeof(entry), blkno, 0);
+                    }
+                }
+                else if (starget->din->type == SFS_TYPE_DIR) {
+                    ret = sfs_dirent_link_nolock(sfs, snew, new_slot,
+                                                 starget, new_name);
+                    if (ret == 0) {
+                        ret = sfs_dirent_unlink_nolock(sfs, sold, old_slot,
+                                                       starget);
+                        if (ret != 0) {
+                            (void)sfs_dirent_unlink_nolock(sfs, snew,
+                                                           new_slot, starget);
+                        }
+                    }
+                    if (ret == 0) {
+                        ret = sfs_dirent_set_parent_nolock(sfs, starget,
+                                                           sold, snew);
+                        if (ret != 0) {
+                            (void)sfs_dirent_unlink_nolock(sfs, snew,
+                                                           new_slot, starget);
+                            (void)sfs_dirent_link_nolock(sfs, sold,
+                                                         old_slot, starget,
+                                                         old_name);
+                        }
                     }
                 }
                 else {

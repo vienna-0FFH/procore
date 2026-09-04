@@ -18,6 +18,19 @@ main(void) {
     assert(mkdir("disk0:/__vfs_case") == 0);
     assert(mkdir("/__vfs_case/sub") == 0);
     assert(mkdir("/__vfs_case/sub") == -E_EXISTS);
+    assert(mkdir("/__vfs_case/move_src") == 0);
+    assert(mkdir("/__vfs_case/move_src/child") == 0);
+    assert(mkdir("/__vfs_case/move_dst") == 0);
+    assert(rename("/__vfs_case/move_src",
+                  "/__vfs_case/move_dst/moved") == 0);
+    fd = open("/__vfs_case/move_dst/moved/child", O_RDONLY);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+    assert(rename("/__vfs_case/move_dst",
+                  "/__vfs_case/move_dst/moved/cycle") == -E_INVAL);
+    assert(unlink("/__vfs_case/move_dst/moved/child") == 0);
+    assert(unlink("/__vfs_case/move_dst/moved") == 0);
+    assert(unlink("/__vfs_case/move_dst") == 0);
 
     fd = open("disk0:/__vfs_case//sub/./file", O_RDWR | O_CREAT);
     assert(fd >= 0);

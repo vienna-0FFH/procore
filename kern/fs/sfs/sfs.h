@@ -18,6 +18,9 @@
 #define SFS_MAX_INFO_LEN                            31                      /* max length of infomation */
 #define SFS_MAX_FNAME_LEN                           FS_MAX_FNAME_LEN        /* max length of filename */
 #define SFS_MAX_FILE_SIZE                           (1024UL * 1024 * 128)   /* max file size (128M) */
+#define SFS_DIR_DOT_SLOT                            0                       /* "." entry */
+#define SFS_DIR_DOTDOT_SLOT                         1                       /* ".." entry */
+#define SFS_DIR_FIRST_ENTRY                         2                       /* first user entry */
 #define SFS_BLKN_SUPER                              0                       /* block the superblock lives in */
 #define SFS_BLKN_ROOT                               1                       /* location of the root dir inode */
 #define SFS_BLKN_FREEMAP                            2                       /* 1st block of the freemap */
