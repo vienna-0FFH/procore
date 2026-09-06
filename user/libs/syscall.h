@@ -1,6 +1,8 @@
 #ifndef __USER_LIBS_SYSCALL_H__
 #define __USER_LIBS_SYSCALL_H__
 
+#include <unistd.h>
+
 int sys_exit(int error_code);
 int sys_fork(void);
 int sys_clone(uint32_t clone_flags, void *child_stack,
@@ -13,6 +15,9 @@ int sys_getpid(void);
 int sys_getppid(void);
 int sys_gettid(void);
 int sys_getcpu(void);
+int sys_setaffinity(int pid, uint32_t mask);
+int sys_getaffinity(int pid, uint32_t *mask_store);
+int sys_getcpustat(int cpu, struct cpu_stat *stat);
 int sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);
 int sys_munmap(void *addr, size_t len);
 int sys_brk(uintptr_t newbrk);

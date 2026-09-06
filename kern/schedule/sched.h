@@ -41,6 +41,8 @@ struct sched_class {
     void (*dequeue)(struct run_queue *rq, struct proc_struct *proc);
     // choose the next runnable task
     struct proc_struct *(*pick_next)(struct run_queue *rq);
+    // choose the next task that is allowed on CPU_ID
+    struct proc_struct *(*pick_next_for_cpu)(struct run_queue *rq, int cpu_id);
     // dealer of the time-tick
     void (*proc_tick)(struct run_queue *rq, struct proc_struct *proc);
     /* for SMP support in the future
@@ -70,5 +72,8 @@ void schedule(void);
 void add_timer(timer_t *timer);
 void del_timer(timer_t *timer);
 void run_timer_list(void);
+void sched_balance(void);
+unsigned int sched_cpu_load(int cpu);
+void sched_setaffinity_locked(struct proc_struct *proc, uint32_t mask);
 
 #endif /* !__KERN_SCHEDULE_SCHED_H__ */

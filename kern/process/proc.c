@@ -127,6 +127,7 @@ alloc_proc(void) {
         proc->rq = NULL;
         proc->on_rq = 0;
         proc->cpu = 0;
+        proc->cpu_mask = smp_online_cpu_mask();
         proc->on_cpu = 0;
         list_init(&(proc->run_link));
         proc->time_slice = 0;
@@ -563,6 +564,7 @@ do_fork_with_entry(uint32_t clone_flags, uintptr_t stack,
     /* The parent remains stable while the child inherits its address space
      * and file table.  Their internal locks serialize shared-object users. */
     proc->parent = current;
+    proc->cpu_mask = current->cpu_mask;
     assert(current->wait_state == 0);
 
     if (setup_kstack(proc) != 0) {
@@ -1115,6 +1117,73 @@ do_kill(int pid) {
     }
     return ret;
 
+}
+
+static struct proc_struct *
+find_proc_locked(int pid) {
+    list_entry_t *list, *le;
+
+    if (pid == 0) {
+        return current;
+    }
+    if (pid <= 0 || pid >= MAX_PID) {
+        return NULL;
+    }
+    list = hash_list + pid_hashfn(pid);
+    le = list;
+    while ((le = list_next(le)) != list) {
+        struct proc_struct *proc = le2proc(le, hash_link);
+        if (proc->pid == pid) {
+            return proc;
+        }
+    }
+    return NULL;
+}
+
+int
+do_setaffinity(int pid, uint32_t mask) {
+    struct proc_struct *proc;
+    bool intr_flag;
+    int ret = 0;
+
+    if (mask == 0 || (mask & ~smp_online_cpu_mask()) != 0) {
+        return -E_INVAL;
+    }
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    proc = find_proc_locked(pid);
+    if (proc == NULL || proc->state == PROC_ZOMBIE) {
+        ret = -E_BAD_PROC;
+    }
+    else {
+        sched_setaffinity_locked(proc, mask);
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    return ret;
+}
+
+int
+do_getaffinity(int pid, uint32_t *mask_store) {
+    struct proc_struct *proc;
+    bool intr_flag;
+    int ret = 0;
+
+    if (mask_store == NULL) {
+        return -E_INVAL;
+    }
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    proc = find_proc_locked(pid);
+    if (proc == NULL) {
+        ret = -E_BAD_PROC;
+    }
+    else {
+        *mask_store = proc->cpu_mask;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    return ret;
 }
 
 // kernel_execve - do SYS_exec syscall to exec a user program called by user_main kernel_thread

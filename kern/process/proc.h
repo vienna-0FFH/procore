@@ -67,6 +67,7 @@ struct proc_struct {
     struct run_queue *rq;                       // running queue contains Process
     volatile bool on_rq;                         // linked on a run queue
     int cpu;                                    // last CPU owning this process
+    uint32_t cpu_mask;                          // CPUs on which this process may run
     volatile bool on_cpu;                       // process is currently executing on a CPU
     list_entry_t run_link;                      // the entry linked in run queue
     int time_slice;                             // time slice for occupying the CPU
@@ -111,6 +112,8 @@ int do_yield(void);
 int do_execve(const char *name, int argc, const char **argv);
 int do_wait(int pid, int *code_store);
 int do_kill(int pid);
+int do_setaffinity(int pid, uint32_t mask);
+int do_getaffinity(int pid, uint32_t *mask_store);
 //Set process scheduling priority (bigger value will get more CPU time)
 void lab6_set_priority(uint32_t priority);
 int do_sleep(unsigned int time);

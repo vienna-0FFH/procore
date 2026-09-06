@@ -6,6 +6,7 @@
 #include <smp_config.h>
 
 struct proc_struct;
+struct cpu_stat;
 
 void smp_init(void);
 int smp_cpu_count(void);
@@ -23,6 +24,11 @@ void smp_send_reschedule(void);
 void smp_send_reschedule_cpu(int cpu_index);
 void smp_tlb_shootdown(pde_t *pgdir, uintptr_t la);
 void smp_handle_tlb_ipi(void);
+uint32_t smp_online_cpu_mask(void);
+void smp_record_tick(int cpu, bool idle);
+void smp_record_switch(int cpu);
+void smp_record_migration(int cpu);
+int smp_get_cpu_stat(int cpu, struct cpu_stat *stat);
 void smp_switch_begin(struct proc_struct *proc);
 struct proc_struct *smp_switch_take(void);
 

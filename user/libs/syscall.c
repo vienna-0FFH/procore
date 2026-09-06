@@ -98,6 +98,21 @@ sys_getcpu(void) {
 }
 
 int
+sys_setaffinity(int pid, uint32_t mask) {
+    return syscall2(SYS_setaffinity, pid, mask);
+}
+
+int
+sys_getaffinity(int pid, uint32_t *mask_store) {
+    return syscall2(SYS_getaffinity, pid, (uintptr_t)mask_store);
+}
+
+int
+sys_getcpustat(int cpu, struct cpu_stat *stat) {
+    return syscall2(SYS_getcpustat, cpu, (uintptr_t)stat);
+}
+
+int
 sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
     return syscall4(SYS_mmap, (uintptr_t)addr, len, prot, flags);
 }

@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <sysfile.h>
 #include <error.h>
+#include <smp.h>
 
 static int
 sys_exit(uint32_t arg[]) {
@@ -184,6 +185,55 @@ sys_brk(uint32_t arg[]) {
 }
 
 static int
+sys_setaffinity(uint32_t arg[]) {
+    return do_setaffinity((int)arg[0], arg[1]);
+}
+
+static int
+sys_getaffinity(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uint32_t mask;
+    int ret;
+
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    ret = do_getaffinity((int)arg[0], &mask);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &mask, sizeof(mask))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_getcpustat(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct cpu_stat stat;
+    int ret;
+
+    if (mm == NULL ||
+        !user_mem_check(mm, (uintptr_t)arg[1], sizeof(stat), 1)) {
+        return -E_INVAL;
+    }
+    ret = smp_get_cpu_stat((int)arg[0], &stat);
+    if (ret != 0) {
+        return ret;
+    }
+    stat.runnable = sched_cpu_load((int)arg[0]);
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &stat, sizeof(stat))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
 sys_putc(uint32_t arg[]) {
     int c = (int)arg[0];
     cputchar(c);
@@ -332,6 +382,9 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_mmap]              sys_mmap,
     [SYS_munmap]            sys_munmap,
     [SYS_brk]               sys_brk,
+    [SYS_setaffinity]       sys_setaffinity,
+    [SYS_getaffinity]       sys_getaffinity,
+    [SYS_getcpustat]        sys_getcpustat,
     [SYS_putc]              sys_putc,
     [SYS_pgdir]             sys_pgdir,
     [SYS_gettime]           sys_gettime,

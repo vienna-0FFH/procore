@@ -207,6 +207,7 @@ trap_dispatch(struct trapframe *tf) {
     char c;
 
     int ret=0;
+    int timer_cpu;
 
     switch (tf->tf_trapno) {
     case T_PGFLT:  //page fault
@@ -250,10 +251,16 @@ trap_dispatch(struct trapframe *tf) {
          *    Every tick, you should update the system time, iterate the timers, and trigger the timers which are end to call scheduler.
          *    You can use one funcitons to finish all these things.
          */
-        if (smp_current_cpu() == 0) {
+        timer_cpu = smp_current_cpu();
+        smp_record_tick(timer_cpu, current != NULL && current->pid == 0);
+        if (timer_cpu == 0) {
             ticks ++;
             assert(current != NULL);
             run_timer_list();
+            if (SMP_BALANCE_INTERVAL != 0 &&
+                (ticks % SMP_BALANCE_INTERVAL) == 0) {
+                sched_balance();
+            }
             smp_send_reschedule();
         }
         else {
@@ -262,6 +269,8 @@ trap_dispatch(struct trapframe *tf) {
         smp_lapic_eoi();
         break;
     case SMP_IPI_RESCHEDULE_VECTOR:
+        smp_record_tick(smp_current_cpu(),
+                        current != NULL && current->pid == 0);
         if (current != NULL) {
             sched_tick();
             current->need_resched = 1;

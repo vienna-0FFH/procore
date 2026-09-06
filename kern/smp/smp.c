@@ -13,6 +13,7 @@
 #include <trap.h>
 #include <sched.h>
 #include <proc.h>
+#include <unistd.h>
 
 struct mp_floating_pointer {
     char signature[4];
@@ -58,6 +59,7 @@ static struct Page *smp_ap_stacks[SMP_MAX_CPUS];
 static uintptr_t smp_ap_stack_tops[SMP_MAX_CPUS];
 static struct proc_struct *smp_current_procs[SMP_MAX_CPUS];
 static struct proc_struct *smp_idle_procs[SMP_MAX_CPUS];
+static struct cpu_stat smp_cpu_stats[SMP_MAX_CPUS];
 static uintptr_t smp_lapic_pa = SMP_LAPIC_DEFAULT_PA;
 static uintptr_t smp_trampoline_pa = SMP_TRAMPOLINE_PA;
 static volatile uint32_t smp_scheduler_started;
@@ -700,6 +702,7 @@ smp_init(void) {
     spin_init(&smp_tlb_lock);
     smp_tlb_sequence = 0;
     memset((void *)smp_tlb_requests, 0, sizeof(smp_tlb_requests));
+    memset((void *)smp_cpu_stats, 0, sizeof(smp_cpu_stats));
     smp_load_cpu_gdt(0, (uintptr_t)bootstacktop);
 
     mpfp = smp_find_mpfp();
@@ -776,6 +779,53 @@ smp_init(void) {
 int
 smp_cpu_count(void) {
     return smp_ncpu;
+}
+
+uint32_t
+smp_online_cpu_mask(void) {
+    uint32_t mask = 0;
+    int cpu;
+    for (cpu = 0; cpu < smp_ncpu && cpu < 32; cpu++) {
+        if (smp_online[cpu] != 0) {
+            mask |= 1U << cpu;
+        }
+    }
+    return mask != 0 ? mask : 1U;
+}
+
+void
+smp_record_tick(int cpu, bool idle) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_cpu_stats[cpu].ticks++;
+        if (idle) {
+            smp_cpu_stats[cpu].idle_ticks++;
+        }
+    }
+}
+
+void
+smp_record_switch(int cpu) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_cpu_stats[cpu].switches++;
+    }
+}
+
+void
+smp_record_migration(int cpu) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_cpu_stats[cpu].migrations++;
+    }
+}
+
+int
+smp_get_cpu_stat(int cpu, struct cpu_stat *stat) {
+    if (stat == NULL || cpu < 0 || cpu >= SMP_MAX_CPUS) {
+        return -E_INVAL;
+    }
+    *stat = smp_cpu_stats[cpu];
+    stat->cpu_id = (uint32_t)cpu;
+    stat->online = (cpu < smp_ncpu && smp_online[cpu] != 0);
+    return 0;
 }
 
 int

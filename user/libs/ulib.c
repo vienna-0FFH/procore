@@ -88,6 +88,21 @@ getcpu(void) {
     return sys_getcpu();
 }
 
+int
+setaffinity(int pid, uint32_t mask) {
+    return sys_setaffinity(pid, mask);
+}
+
+int
+getaffinity(int pid, uint32_t *mask_store) {
+    return sys_getaffinity(pid, mask_store);
+}
+
+int
+getcpustat(int cpu, struct cpu_stat *stat) {
+    return sys_getcpustat(cpu, stat);
+}
+
 void *
 mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
     int ret = sys_mmap(addr, len, prot, flags);

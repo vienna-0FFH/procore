@@ -48,9 +48,17 @@
 #define SMP_TLB_SHOOTDOWN_TIMEOUT    1000000U
 #endif
 
+#ifndef SMP_BALANCE_INTERVAL
+#define SMP_BALANCE_INTERVAL         10U
+#endif
+
 
 #if SMP_MAX_CPUS < 1
 #error "SMP_MAX_CPUS must be positive"
+#endif
+
+#if SMP_MAX_CPUS > 32
+#error "CPU affinity masks currently support at most 32 CPUs"
 #endif
 
 #endif /* !__KERN_SMP_CONFIG_H__ */

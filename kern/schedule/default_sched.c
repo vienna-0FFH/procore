@@ -23,6 +23,39 @@ proc_stride_comp_f(void *a, void *b)
      else return -1;
 }
 
+static bool
+proc_allowed_on_cpu(struct proc_struct *proc, int cpu) {
+     return cpu < 0 || (cpu < 32 && (proc->cpu_mask & (1U << cpu)) != 0);
+}
+
+#if USE_SKEW_HEAP
+static skew_heap_entry_t *
+stride_find_allowed(skew_heap_entry_t *entry, int cpu) {
+     skew_heap_entry_t *best = NULL;
+     skew_heap_entry_t *candidate;
+     struct proc_struct *proc;
+
+     if (entry == NULL) {
+          return NULL;
+     }
+     proc = le2proc(entry, lab6_run_pool);
+     if (proc_allowed_on_cpu(proc, cpu)) {
+          best = entry;
+     }
+     candidate = stride_find_allowed(entry->left, cpu);
+     if (candidate != NULL &&
+         (best == NULL || proc_stride_comp_f(candidate, best) < 0)) {
+          best = candidate;
+     }
+     candidate = stride_find_allowed(entry->right, cpu);
+     if (candidate != NULL &&
+         (best == NULL || proc_stride_comp_f(candidate, best) < 0)) {
+          best = candidate;
+     }
+     return best;
+}
+#endif
+
 /*
  * stride_init initializes the run-queue rq with correct assignment for
  * member variables, including:
@@ -108,11 +141,12 @@ stride_dequeue(struct run_queue *rq, struct proc_struct *proc) {
  * queue structures.
  */
 static struct proc_struct *
-stride_pick_next(struct run_queue *rq) {
+stride_pick_next_for_cpu(struct run_queue *rq, int cpu_id) {
      /* core: implementation */
 #if USE_SKEW_HEAP
-     if (rq->lab6_run_pool == NULL) return NULL;
-     struct proc_struct *p = le2proc(rq->lab6_run_pool, lab6_run_pool);
+     skew_heap_entry_t *entry = stride_find_allowed(rq->lab6_run_pool, cpu_id);
+     if (entry == NULL) return NULL;
+     struct proc_struct *p = le2proc(entry, lab6_run_pool);
 #else
      list_entry_t *le = list_next(&(rq->run_list));
 
@@ -124,7 +158,9 @@ stride_pick_next(struct run_queue *rq) {
      while (le != &rq->run_list)
      {
           struct proc_struct *q = le2proc(le, run_link);
-          if ((int32_t)(p->lab6_stride - q->lab6_stride) > 0)
+          if (proc_allowed_on_cpu(q, cpu_id) &&
+              (!proc_allowed_on_cpu(p, cpu_id) ||
+               (int32_t)(p->lab6_stride - q->lab6_stride) > 0))
                p = q;
           le = list_next(le);
      }
@@ -133,6 +169,11 @@ stride_pick_next(struct run_queue *rq) {
           p->lab6_stride += BIG_STRIDE;
      else p->lab6_stride += BIG_STRIDE / p->lab6_priority;
      return p;
+}
+
+static struct proc_struct *
+stride_pick_next(struct run_queue *rq) {
+     return stride_pick_next_for_cpu(rq, -1);
 }
 
 /*
@@ -160,5 +201,6 @@ struct sched_class default_sched_class = {
      .enqueue = stride_enqueue,
      .dequeue = stride_dequeue,
      .pick_next = stride_pick_next,
+     .pick_next_for_cpu = stride_pick_next_for_cpu,
      .proc_tick = stride_proc_tick,
 };

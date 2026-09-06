@@ -21,6 +21,9 @@
 #define SYS_gettid          23
 #define SYS_getcpu          24
 #define SYS_brk             25
+#define SYS_setaffinity     26
+#define SYS_getaffinity     27
+#define SYS_getcpustat      28
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -59,6 +62,18 @@
 #define MAP_FAILED          ((void *)(uintptr_t)-1)
 /* User-visible page granularity; the kernel's MMU header remains canonical. */
 #define UCORE_PAGE_SIZE     4096
+
+/* Snapshot returned by getcpustat().  Counters are monotonic modulo 32 bits;
+ * callers that need long-running totals can account for wraparound. */
+struct cpu_stat {
+    uint32_t cpu_id;
+    uint32_t online;
+    uint32_t ticks;
+    uint32_t switches;
+    uint32_t idle_ticks;
+    uint32_t migrations;
+    uint32_t runnable;
+};
 
 /* VFS flags */
 // flags for open: choose one of these
