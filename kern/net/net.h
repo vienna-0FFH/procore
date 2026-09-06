@@ -21,6 +21,7 @@ struct net_socket {
     semaphore_t rx_sem;
     list_entry_t rx_queue;
     int rx_count;
+    int waiters;
     volatile int ref_count;
     volatile int descriptor_count;
     uint16_t port;
@@ -32,9 +33,9 @@ struct net_socket {
 void net_init(void);
 struct net_socket *net_socket_create(int domain, int type, int protocol);
 void net_socket_get(struct net_socket *socket);
-void net_socket_get_descriptor(struct net_socket *socket);
 void net_socket_put(struct net_socket *socket);
-void net_socket_put_descriptor(struct net_socket *socket);
+void net_socket_get_descriptor(struct net_socket *socket);
+void net_socket_close_descriptor(struct net_socket *socket);
 int net_socket_bind(struct net_socket *socket,
                     const struct sockaddr_in *address, size_t length);
 int net_socket_sendto(struct net_socket *socket, const void *data, size_t length,

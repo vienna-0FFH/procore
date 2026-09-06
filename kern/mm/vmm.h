@@ -38,6 +38,7 @@ struct mm_struct {
     volatile int mm_count;          // the number of processes sharing the mm
     semaphore_t mm_sem;            // mutex for using dup_mmap fun to duplicat the mm 
     int locked_by;                 // the lock owner process's pid
+    uint32_t lock_depth;            // recursive depth for nested fault/copy paths
     uintptr_t start_brk;            // first address available to the heap
     uintptr_t brk;                  // current program break
     struct vma_struct *brk_vma;     // lazy heap mapping, when it exists
@@ -93,19 +94,49 @@ mm_count_dec(struct mm_struct *mm) {
 static inline void
 lock_mm(struct mm_struct *mm) {
     if (mm != NULL) {
+        if (current != NULL && mm->lock_depth != 0 &&
+            mm->locked_by == current->pid) {
+            mm->lock_depth++;
+            return;
+        }
         down(&(mm->mm_sem));
         if (current != NULL) {
             mm->locked_by = current->pid;
         }
+        mm->lock_depth = 1;
     }
 }
 
 static inline void
 unlock_mm(struct mm_struct *mm) {
     if (mm != NULL) {
+        if (current != NULL && mm->lock_depth > 1 &&
+            mm->locked_by == current->pid) {
+            mm->lock_depth--;
+            return;
+        }
         up(&(mm->mm_sem));
+        mm->lock_depth = 0;
         mm->locked_by = 0;
     }
+}
+
+static inline bool
+try_lock_mm(struct mm_struct *mm) {
+    if (mm == NULL) {
+        return 0;
+    }
+    if (current != NULL && mm->lock_depth != 0 &&
+        mm->locked_by == current->pid) {
+        mm->lock_depth++;
+        return 1;
+    }
+    if (!try_down(&(mm->mm_sem))) {
+        return 0;
+    }
+    mm->locked_by = current != NULL ? current->pid : 0;
+    mm->lock_depth = 1;
+    return 1;
 }
 
 #endif /* !__KERN_MM_VMM_H__ */

@@ -52,9 +52,18 @@ mm_create(void) {
         mm->start_brk = USERBASE;
         mm->brk = USERBASE;
         mm->brk_vma = NULL;
+        mm->lock_depth = 0;
+        mm->locked_by = 0;
 
-        if (swap_init_ok) swap_init_mm(mm);
-        else mm->sm_priv = NULL;
+        if (swap_init_ok) {
+            if (swap_init_mm(mm) != 0) {
+                kfree(mm);
+                return NULL;
+            }
+        }
+        else {
+            mm->sm_priv = NULL;
+        }
         
         set_mm_count(mm, 0);
         sem_init(&(mm->mm_sem), 1);
@@ -154,6 +163,9 @@ mm_destroy(struct mm_struct *mm) {
     while ((le = list_next(list)) != list) {
         list_del(le);
         kfree(le2vma(le, list_link));  //kfree vma        
+    }
+    if (swap_init_ok) {
+        swap_cleanup_mm(mm);
     }
     kfree(mm); //kfree mm
     mm=NULL;
@@ -724,6 +736,7 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     }
     else {
         struct Page *page=NULL;
+        swap_entry_t swap_entry = 0;
         if (*ptep & PTE_P) {
             struct Page *old_page = pte2page(*ptep);
             struct Page *new_page;
@@ -736,6 +749,10 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
             }
             if (page_ref(old_page) == 1) {
                 *ptep = (*ptep & ~PTE_COW) | PTE_W;
+                if (swap_init_ok) {
+                    swap_map_swappable(mm, addr, old_page, 0);
+                    old_page->pra_vaddr = addr;
+                }
                 tlb_invalidate(mm->pgdir, addr);
                 ret = 0;
                 goto failed;
@@ -754,9 +771,10 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
             }
             ret = 0;
             goto pgfault_done;
-        } else{
+       } else{
            // if this pte is a swap entry, then load data from disk to a page with phy addr
            // and call page_insert to map the phy addr with logical addr
+           swap_entry = *ptep;
            if(swap_init_ok) {               
                if ((ret = swap_in(mm, addr, &page)) != 0) {
                    cprintf("swap_in in do_pgfault failed\n");
@@ -769,9 +787,15 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
             goto failed;
            }
        } 
-       page_insert(mm->pgdir, page, addr, perm);
-       swap_map_swappable(mm, addr, page, 1);
-       page->pra_vaddr = addr;
+       if (page_insert(mm->pgdir, page, addr, perm) != 0) {
+           free_page(page);
+           goto failed;
+       }
+       swap_release_entry(swap_entry);
+       if (swap_init_ok) {
+           swap_map_swappable(mm, addr, page, 1);
+           page->pra_vaddr = addr;
+       }
    }
 pgfault_done:
    ret = 0;

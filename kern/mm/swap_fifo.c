@@ -16,68 +16,91 @@
  * poorly in practical application. Thus, it is rarely used in its unmodified form. This
  * algorithm experiences Belady's anomaly.
  *
- * Details of FIFO PRA
- * (1) Prepare: In order to implement FIFO PRA, we should manage all swappable pages, so we can
- *              link these pages into pra_list_head according the time order. At first you should
- *              be familiar to the struct list in list.h. struct list is a simple doubly linked list
- *              implementation. You should know howto USE: list_init, list_add(list_add_after),
- *              list_add_before, list_del, list_next, list_prev. Another tricky method is to transform
- *              a general list struct to a special struct (such as struct page). You can find some MACRO:
- *              le2page (in memlayout.h), (in future labs: le2vma (in vmm.h), le2proc (in proc.h),etc.
+ * Details of FIFO PRA: each address space owns a queue of resident pages,
+ * ordered by insertion time. A per-address-space lock keeps queue updates
+ * independent on SMP.
  */
 
-list_entry_t pra_list_head;
+static list_entry_t pra_list_head;
+static spinlock_t fifo_lock;
 /*
- * (2) _fifo_init_mm: init pra_list_head and let  mm->sm_priv point to the addr of pra_list_head.
- *              Now, From the memory control struct mm_struct, we can access FIFO PRA
+ * (2) _fifo_init_mm: attach the address space to the global replacement
+ *     queue. A Page has one replacement link and may be shared after fork().
  */
 static int
 _fifo_init_mm(struct mm_struct *mm)
-{     
-     list_init(&pra_list_head);
+{
      mm->sm_priv = &pra_list_head;
-     //cprintf(" mm->sm_priv %x in fifo_init_mm\n",mm->sm_priv);
      return 0;
 }
+
+static void
+_fifo_cleanup_mm(struct mm_struct *mm)
+{
+     (void)mm;
+}
+
+static void
+_fifo_untrack_page(struct Page *page)
+{
+    if (page == NULL) {
+        return;
+    }
+    spin_lock(&fifo_lock);
+    if (!list_empty(&(page->pra_page_link))) {
+        list_del_init(&(page->pra_page_link));
+    }
+    page->pra_mm = NULL;
+    page->pra_vaddr = 0;
+    spin_unlock(&fifo_lock);
+}
 /*
- * (3)_fifo_map_swappable: According FIFO PRA, we should link the most recent arrival page at the back of pra_list_head qeueue
+ * (3)_fifo_map_swappable: link the most recent arrival page at the back of
+ *     this address space's FIFO queue.
  */
 static int
 _fifo_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
 {
-    list_entry_t *head=(list_entry_t*) mm->sm_priv;
-    list_entry_t *entry=&(page->pra_page_link);
+    list_entry_t *head = mm != NULL ? mm->sm_priv : NULL;
+    list_entry_t *entry;
  
-    assert(entry != NULL && head != NULL);
-    if (!list_empty(entry)) {
-        return 0;
+    if (head == NULL || page == NULL) {
+        return -E_INVAL;
     }
-    //record the page access situlation
-    /*core implementation 2: implementation*/ 
-    //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
-    list_add(head, entry);
+    entry = &(page->pra_page_link);
+    spin_lock(&fifo_lock);
+    if (list_empty(entry)) {
+        list_add(head, entry);
+        page->pra_mm = mm;
+        page->pra_vaddr = addr;
+    }
+    spin_unlock(&fifo_lock);
     return 0;
 }
 /*
- *  (4)_fifo_swap_out_victim: According FIFO PRA, we should unlink the  earliest arrival page in front of pra_list_head qeueue,
- *                            then set the addr of addr of this page to ptr_page.
+ *  (4)_fifo_swap_out_victim: unlink the oldest page from this queue and
+ *                            return it to the caller.
  */
 static int
 _fifo_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
-     list_entry_t *head=(list_entry_t*) mm->sm_priv;
-         assert(head != NULL);
-     assert(in_tick==0);
-     /* Select the victim */
-     /*core implementation 2: implementation*/ 
-     //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
-     //(2)  set the addr of addr of this page to ptr_page
-     /* Select the tail */
+     list_entry_t *head = mm != NULL ? mm->sm_priv : NULL;
+     if (head == NULL || ptr_page == NULL || in_tick != 0) {
+         return -E_INVAL;
+     }
+     /* Select the oldest entry (the tail). */
+     spin_lock(&fifo_lock);
      list_entry_t *le = head->prev;
-     assert(head!=le);
+    if (head == le) {
+        spin_unlock(&fifo_lock);
+         return -E_NO_MEM;
+     }
      struct Page *p = le2page(le, pra_page_link);
      list_del_init(le);
-     assert(p !=NULL);
+     spin_unlock(&fifo_lock);
+     if (p == NULL) {
+         return -E_INVAL;
+     }
      *ptr_page = p;
      return 0;
 }
@@ -128,20 +151,27 @@ _fifo_check_swap(void) {
 static int
 _fifo_init(void)
 {
+    list_init(&pra_list_head);
+    spin_init(&fifo_lock);
     return 0;
 }
 
 static int
 _fifo_set_unswappable(struct mm_struct *mm, uintptr_t addr)
 {
+    pte_t *ptep;
     if (mm == NULL) {
         return -E_INVAL;
     }
-    pte_t *ptep = get_pte(mm->pgdir, addr, 0);
+    ptep = get_pte(mm->pgdir, addr, 0);
     if (ptep != NULL && (*ptep & PTE_P)) {
         struct Page *page = pte2page(*ptep);
         if (!list_empty(&(page->pra_page_link))) {
+            spin_lock(&fifo_lock);
             list_del_init(&(page->pra_page_link));
+            page->pra_mm = NULL;
+            page->pra_vaddr = 0;
+            spin_unlock(&fifo_lock);
         }
     }
     return 0;
@@ -157,6 +187,8 @@ struct swap_manager swap_manager_fifo =
      .name            = "fifo swap manager",
      .init            = &_fifo_init,
      .init_mm         = &_fifo_init_mm,
+     .cleanup_mm      = &_fifo_cleanup_mm,
+     .untrack_page    = &_fifo_untrack_page,
      .tick_event      = &_fifo_tick_event,
      .map_swappable   = &_fifo_map_swappable,
      .set_unswappable = &_fifo_set_unswappable,

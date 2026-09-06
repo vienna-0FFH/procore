@@ -30,6 +30,7 @@ fd_array_init(struct file *fd_array) {
     for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++, file ++) {
         file->open_count = 0;
         file->status = FD_NONE, file->fd = fd;
+        file->pos = 0;
         file->object.node = NULL;
     }
 }
@@ -71,7 +72,7 @@ fd_array_free(struct file *file) {
     assert(fopen_count(file) == 0);
     if (file->status == FD_CLOSED) {
         if (file_is_socket(file)) {
-        net_socket_put(file_socket(file));
+            net_socket_put(file_socket(file));
         }
         else {
             vfs_close(file_node(file));
@@ -101,7 +102,7 @@ fd_array_release(struct file *file) {
 void
 fd_array_open(struct file *file) {
     assert(file->status == FD_INIT &&
-           file_node(file) != NULL || file_is_socket(file));
+           (file_node(file) != NULL || file_is_socket(file)));
     file->status = FD_OPENED;
     fopen_count_inc(file);
 }
@@ -111,6 +112,9 @@ void
 fd_array_close(struct file *file) {
     assert(file->status == FD_OPENED);
     assert(fopen_count(file) > 0);
+    if (file_is_socket(file)) {
+        net_socket_close_descriptor(file_socket(file));
+    }
     file->status = FD_CLOSED;
     if (fopen_count_dec(file) == 0) {
         fd_array_free(file);
@@ -127,7 +131,7 @@ fd_array_dup(struct file *to, struct file *from) {
     to->writable = from->writable;
     if (file_is_socket(from)) {
         file_socket(to) = file_socket(from);
-        net_socket_get(file_socket(to));
+        net_socket_get_descriptor(file_socket(to));
     }
     else {
         struct inode *node = file_node(from);
@@ -235,6 +239,9 @@ file_read(int fd, void *base, size_t len, size_t *copied_store) {
     if (!file->readable) {
         return -E_INVAL;
     }
+    if (file_is_socket(file)) {
+        return -E_INVAL;
+    }
     fd_array_acquire(file);
 
     struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
@@ -261,6 +268,9 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
     if (!file->writable) {
         return -E_INVAL;
     }
+    if (file_is_socket(file)) {
+        return -E_INVAL;
+    }
     fd_array_acquire(file);
 
     struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
@@ -283,6 +293,9 @@ file_seek(int fd, off_t pos, int whence) {
     struct file *file;
     if ((ret = fd2file(fd, &file)) != 0) {
         return ret;
+    }
+    if (file_is_socket(file)) {
+        return -E_SEEK;
     }
     fd_array_acquire(file);
 
@@ -315,6 +328,9 @@ file_fstat(int fd, struct stat *stat) {
     if ((ret = fd2file(fd, &file)) != 0) {
         return ret;
     }
+    if (file_is_socket(file)) {
+        return -E_INVAL;
+    }
     fd_array_acquire(file);
     ret = vop_fstat(file_node(file), stat);
     fd_array_release(file);
@@ -329,6 +345,9 @@ file_fsync(int fd) {
     if ((ret = fd2file(fd, &file)) != 0) {
         return ret;
     }
+    if (file_is_socket(file)) {
+        return -E_INVAL;
+    }
     fd_array_acquire(file);
     ret = vop_fsync(file_node(file));
     fd_array_release(file);
@@ -342,6 +361,9 @@ file_getdirentry(int fd, struct dirent *direntp) {
     struct file *file;
     if ((ret = fd2file(fd, &file)) != 0) {
         return ret;
+    }
+    if (file_is_socket(file)) {
+        return -E_NOTDIR;
     }
     fd_array_acquire(file);
 
@@ -374,6 +396,10 @@ file_socket_create(int domain, int type, int protocol) {
     struct net_socket *socket;
     int ret;
 
+    if (domain != AF_INET || type != SOCK_DGRAM ||
+        (protocol != 0 && protocol != IPPROTO_UDP)) {
+        return -E_INVAL;
+    }
     if ((ret = fd_array_alloc(NO_FD, &file)) != 0) {
         return ret;
     }

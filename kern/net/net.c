@@ -7,14 +7,16 @@
 
 static list_entry_t net_socket_list;
 static spinlock_t net_socket_lock;
-static uint16_t net_next_port;
+static uint32_t net_next_port;
 static struct net_stats net_statistics;
 static bool net_ready;
 
 static bool
 net_address_valid(const struct sockaddr_in *address, size_t length) {
     return address != NULL && length >= sizeof(*address) &&
-           address->sin_family == AF_INET;
+           address->sin_family == AF_INET &&
+           (address->sin_addr == INADDR_ANY ||
+            address->sin_addr == INADDR_LOOPBACK);
 }
 
 static struct net_socket *
@@ -35,10 +37,12 @@ net_allocate_port_locked(uint16_t *port_store) {
     uint32_t i;
 
     for (i = 0; i < count; i++) {
-        uint16_t candidate = htons(net_next_port);
-        net_next_port++;
-        if (net_next_port > NET_EPHEMERAL_LAST) {
+        uint16_t candidate = htons((uint16_t)net_next_port);
+        if (net_next_port == NET_EPHEMERAL_LAST) {
             net_next_port = NET_EPHEMERAL_FIRST;
+        }
+        else {
+            net_next_port++;
         }
         if (net_find_port_locked(candidate, NULL) == NULL) {
             *port_store = candidate;
@@ -75,7 +79,9 @@ net_socket_create(int domain, int type, int protocol) {
     sem_init(&socket->rx_sem, 0);
     list_init(&socket->rx_queue);
     socket->rx_count = 0;
+    socket->waiters = 0;
     socket->ref_count = 1;
+    socket->descriptor_count = 1;
     socket->port = 0;
     socket->addr = INADDR_ANY;
     socket->bound = 0;
@@ -101,6 +107,30 @@ net_socket_get(struct net_socket *socket) {
 }
 
 void
+net_socket_get_descriptor(struct net_socket *socket) {
+    if (socket != NULL) {
+        atomic_inc_return(&socket->descriptor_count);
+        net_socket_get(socket);
+    }
+}
+
+void
+net_socket_close_descriptor(struct net_socket *socket) {
+    int waiters = 0;
+    if (socket == NULL ||
+        atomic_dec_return(&socket->descriptor_count) != 0) {
+        return;
+    }
+    spin_lock(&socket->lock);
+    socket->closed = 1;
+    waiters = socket->waiters;
+    spin_unlock(&socket->lock);
+    while (waiters-- > 0) {
+        up(&socket->rx_sem);
+    }
+}
+
+void
 net_socket_put(struct net_socket *socket) {
     list_entry_t *entry;
 
@@ -108,7 +138,6 @@ net_socket_put(struct net_socket *socket) {
         return;
     }
     socket->closed = 1;
-    up(&socket->rx_sem);
     spin_lock(&net_socket_lock);
     if (!list_empty(&socket->link)) {
         list_del_init(&socket->link);
@@ -191,7 +220,12 @@ net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
         socket->addr = INADDR_LOOPBACK;
         socket->bound = 1;
     }
-    target = net_find_port_locked(destination->sin_port, socket);
+    if (destination->sin_addr != INADDR_ANY &&
+        destination->sin_addr != INADDR_LOOPBACK) {
+        spin_unlock(&net_socket_lock);
+        return -E_NOENT;
+    }
+    target = net_find_port_locked(destination->sin_port, NULL);
     if (target != NULL) {
         net_socket_get(target);
     }
@@ -209,7 +243,8 @@ net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
     packet->len = length;
     packet->from.sin_family = AF_INET;
     packet->from.sin_port = socket->port;
-    packet->from.sin_addr = socket->addr;
+    packet->from.sin_addr = socket->addr == INADDR_ANY ?
+                            INADDR_LOOPBACK : socket->addr;
     memset(packet->from.sin_zero, 0, sizeof(packet->from.sin_zero));
     memcpy(packet->data, data, length);
 
@@ -242,8 +277,16 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
         return -E_INVAL;
     }
     for (;;) {
+        spin_lock(&socket->lock);
+        if (socket->closed) {
+            spin_unlock(&socket->lock);
+            return -E_BAD_PROC;
+        }
+        socket->waiters++;
+        spin_unlock(&socket->lock);
         down(&socket->rx_sem);
         spin_lock(&socket->lock);
+        socket->waiters--;
         if (socket->closed) {
             spin_unlock(&socket->lock);
             return -E_BAD_PROC;

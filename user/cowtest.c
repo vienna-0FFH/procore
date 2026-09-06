@@ -1,6 +1,7 @@
 #include <ulib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <file.h>
 
 #define COW_PAGES 8
 
@@ -21,10 +22,17 @@ main(void) {
     }
 
     if ((pid = fork()) == 0) {
-        for (i = 0; i < COW_PAGES; i++) {
+        int fd;
+        for (i = 0; i < COW_PAGES - 1; i++) {
             assert(mapping[i * UCORE_PAGE_SIZE] == (unsigned char)(0x20 + i));
             mapping[i * UCORE_PAGE_SIZE] = (unsigned char)(0xA0 + i);
         }
+        /* Exercise the kernel copy-to-user path while the last page is
+         * still COW-protected. */
+        fd = open("/sh", O_RDONLY);
+        assert(fd >= 0);
+        assert(read(fd, (void *)(mapping + (COW_PAGES - 1) * UCORE_PAGE_SIZE), 16) == 16);
+        close(fd);
         exit(0);
     }
 

@@ -16,6 +16,14 @@
 
 #define MAX_SWAP_OFFSET_LIMIT                   (1 << 24)
 
+#ifndef SWAP_VICTIM_SCAN_LIMIT
+#define SWAP_VICTIM_SCAN_LIMIT                  64
+#endif
+
+#ifndef SWAP_DEBUG
+#define SWAP_DEBUG                              0
+#endif
+
 extern size_t max_swap_offset;
 
 /* *
@@ -37,6 +45,8 @@ struct swap_manager
      int (*init)            (void);
      /* Initialize the priv data inside mm_struct */
      int (*init_mm)         (struct mm_struct *mm);
+     void (*cleanup_mm)     (struct mm_struct *mm);
+     void (*untrack_page)   (struct Page *page);
      /* Called when tick interrupt occured */
      int (*tick_event)      (struct mm_struct *mm);
      /* Called when map a swappable page into the mm_struct */
@@ -53,11 +63,15 @@ struct swap_manager
 extern volatile int swap_init_ok;
 int swap_init(void);
 int swap_init_mm(struct mm_struct *mm);
+void swap_cleanup_mm(struct mm_struct *mm);
 int swap_tick_event(struct mm_struct *mm);
 int swap_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in);
 int swap_set_unswappable(struct mm_struct *mm, uintptr_t addr);
 int swap_out(struct mm_struct *mm, int n, int in_tick);
 int swap_in(struct mm_struct *mm, uintptr_t addr, struct Page **ptr_result);
+int swap_duplicate_entry(swap_entry_t entry);
+void swap_release_entry(swap_entry_t entry);
+void swap_untrack_page(struct Page *page);
 
 //#define MEMBER_OFFSET(m,t) ((int)(&((t *)0)->m))
 //#define FROM_MEMBER(m,t,a) ((t *)((char *)(a) - MEMBER_OFFSET(m,t)))

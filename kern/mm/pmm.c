@@ -12,6 +12,7 @@
 #include <vmm.h>
 #include <kmalloc.h>
 #include <smp.h>
+#include <mm_config.h>
 
 /* *
  * Task State Segment:
@@ -158,6 +159,7 @@ struct Page *
 alloc_pages(size_t n) {
     struct Page *page=NULL;
     bool intr_flag;
+    unsigned int reclaim_attempts = 0;
     
     while (1)
     {
@@ -170,8 +172,14 @@ alloc_pages(size_t n) {
          if (page != NULL || n > 1 || swap_init_ok == 0) break;
          
          extern struct mm_struct *check_mm_struct;
-         //cprintf("page %x, call swap_out in alloc_pages %d\n",page, n);
-         swap_out(check_mm_struct, n, 0);
+         struct mm_struct *reclaim_mm = check_mm_struct;
+         if (reclaim_mm == NULL && current != NULL) {
+             reclaim_mm = current->mm;
+         }
+         if (reclaim_mm == NULL || reclaim_attempts++ >= PMM_SWAP_RETRY_LIMIT ||
+             swap_out(reclaim_mm, n, 0) == 0) {
+             break;
+         }
     }
     //cprintf("n %d,get page %x, No %d in alloc_pages\n",n,page,(page-pages));
     return page;
@@ -181,6 +189,12 @@ alloc_pages(size_t n) {
 void
 free_pages(struct Page *base, size_t n) {
     bool intr_flag;
+    size_t i;
+    if (swap_init_ok) {
+        for (i = 0; i < n; i++) {
+            swap_untrack_page(base + i);
+        }
+    }
     local_intr_save(intr_flag);
     spin_lock(&pmm_lock);
     pmm_manager->free_pages(base, n);
@@ -230,6 +244,12 @@ page_init(void) {
     pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
 
     for (i = 0; i < npage; i ++) {
+        list_init(&(pages[i].page_link));
+        list_init(&(pages[i].pra_page_link));
+        pages[i].ref = 0;
+        pages[i].property = 0;
+        pages[i].pra_vaddr = 0;
+        pages[i].pra_mm = NULL;
         SetPageReserved(pages + i);
     }
 
@@ -490,6 +510,7 @@ unmap_range(pde_t *pgdir, uintptr_t start, uintptr_t end) {
             }
             else if (*ptep != 0) {
                 /* A non-present entry may be a swap slot. */
+                swap_release_entry(*ptep);
                 *ptep = 0;
                 tlb_invalidate(pgdir, la);
             }
@@ -567,6 +588,9 @@ copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share) {
             }
             else {
                 /* Preserve a swap entry for the child. */
+                if (swap_duplicate_entry(source) != 0) {
+                    return -E_INVAL;
+                }
                 *nptep = source;
             }
         }
@@ -635,17 +659,14 @@ pgdir_alloc_page(pde_t *pgdir, uintptr_t la, uint32_t perm) {
             return NULL;
         }
         if (swap_init_ok){
-            if(check_mm_struct!=NULL) {
-                swap_map_swappable(check_mm_struct, la, page, 0);
+            struct mm_struct *swap_mm = check_mm_struct;
+            if (swap_mm == NULL && current != NULL) {
+                swap_mm = current->mm;
+            }
+            if (swap_mm != NULL) {
+                swap_map_swappable(swap_mm, la, page, 0);
                 page->pra_vaddr=la;
                 assert(page_ref(page) == 1);
-                //cprintf("get No. %d  page: pra_vaddr %x, pra_link.prev %x, pra_link_next %x in pgdir_alloc_page\n", (page-pages), page->pra_vaddr,page->pra_page_link.prev, page->pra_page_link.next);
-            } 
-            else  {  //now current is existed, should fix it in the future
-                //swap_map_swappable(current->mm, la, page, 0);
-                //page->pra_vaddr=la;
-                //assert(page_ref(page) == 1);
-                //panic("pgdir_alloc_page: no pages. now current is existed, should fix it in the future\n");
             }
         }
 

@@ -380,7 +380,7 @@ sys_bind(uint32_t arg[]) {
     struct sockaddr_in address;
     int ret;
 
-    if (mm == NULL) {
+    if (mm == NULL || (size_t)arg[2] < sizeof(address)) {
         return -E_INVAL;
     }
     lock_mm(mm);
@@ -441,7 +441,8 @@ sys_recvfrom(uint32_t arg[]) {
     if (ret > 0) {
         lock_mm(mm);
         if (!copy_to_user(mm, (void *)arg[1], buffer, (size_t)ret) ||
-            !copy_to_user(mm, (void *)arg[3], &source, sizeof(source))) {
+            (arg[3] != 0 &&
+             !copy_to_user(mm, (void *)arg[3], &source, sizeof(source)))) {
             ret = -E_INVAL;
         }
         unlock_mm(mm);

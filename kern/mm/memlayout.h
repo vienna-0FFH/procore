@@ -103,6 +103,8 @@
 #include <atomic.h>
 #include <list.h>
 
+struct mm_struct;
+
 typedef uintptr_t pte_t;
 typedef uintptr_t pde_t;
 typedef pte_t swap_entry_t; //the pte can also be a swap entry
@@ -134,6 +136,7 @@ struct Page {
     list_entry_t page_link;         // free list link
     list_entry_t pra_page_link;     // used for pra (page replace algorithm)
     uintptr_t pra_vaddr;            // used for pra (page replace algorithm)
+    struct mm_struct *pra_mm;       // address space owning the replacement entry
 };
 
 /* Flags describing the status of a page frame */
@@ -166,4 +169,3 @@ typedef struct {
 #endif /* !__ASSEMBLER__ */
 
 #endif /* !__KERN_MM_MEMLAYOUT_H__ */
-
