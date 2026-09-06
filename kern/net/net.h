@@ -31,6 +31,7 @@ struct net_socket {
 };
 
 void net_init(void);
+void net_poll(void);
 struct net_socket *net_socket_create(int domain, int type, int protocol);
 void net_socket_get(struct net_socket *socket);
 void net_socket_put(struct net_socket *socket);

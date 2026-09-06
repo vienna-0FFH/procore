@@ -20,6 +20,7 @@ int e1000_transmit(const void *data, size_t length);
  * the ring is empty, a negative error for a malformed frame, or the frame
  * length on success. */
 int e1000_receive(void *data, size_t capacity);
+void e1000_get_mac(uint8_t mac[6]);
 void e1000_get_stats(struct e1000_stats *stats);
 
 #endif /* !__KERN_DRIVER_E1000_H__ */

@@ -3,6 +3,14 @@
 
 #include <defs.h>
 
+/* Keep the user ABI independent of the kernel include path. */
+#ifndef NET_LOCAL_IP
+#define NET_LOCAL_IP        0x0F02000AU
+#endif
+#ifndef NET_GATEWAY_IP
+#define NET_GATEWAY_IP      0x0202000AU
+#endif
+
 #define T_SYSCALL           0x80
 
 /* syscall number */

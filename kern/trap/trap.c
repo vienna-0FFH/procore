@@ -18,7 +18,7 @@
 #include <proc.h>
 #include <smp.h>
 #include <smp_arch.h>
-#include <e1000.h>
+#include <net.h>
 
 #define TICK_NUM 100
 
@@ -253,7 +253,7 @@ trap_dispatch(struct trapframe *tf) {
          *    You can use one funcitons to finish all these things.
          */
         timer_cpu = smp_current_cpu();
-        e1000_poll();
+        net_poll();
         smp_record_tick(timer_cpu, current != NULL && current->pid == 0);
         if (timer_cpu == 0) {
             ticks ++;

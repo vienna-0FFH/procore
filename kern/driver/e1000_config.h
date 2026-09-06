@@ -46,13 +46,6 @@
 #define E1000_SELFTEST_LENGTH         60U
 #endif
 
-#ifndef E1000_RX_PROBE_DELAY_TICKS
-#define E1000_RX_PROBE_DELAY_TICKS    120U
-#endif
-
-#ifndef E1000_RX_PROBE_RETRIES
-#define E1000_RX_PROBE_RETRIES        3U
-#endif
 
 #if E1000_RX_RING_LEN < 2 || E1000_RX_RING_LEN > 256 || \
     (E1000_RX_RING_LEN & (E1000_RX_RING_LEN - 1)) != 0
@@ -75,10 +68,6 @@
 
 #if E1000_RX_QUEUE_LEN < 1 || E1000_RX_QUEUE_LEN > 256
 #error "E1000_RX_QUEUE_LEN must be in the range 1..256"
-#endif
-
-#if E1000_RX_PROBE_RETRIES < 1
-#error "E1000_RX_PROBE_RETRIES must be positive"
 #endif
 
 #endif /* !__KERN_DRIVER_E1000_CONFIG_H__ */

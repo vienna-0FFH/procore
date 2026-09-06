@@ -114,11 +114,6 @@ static struct {
     uint32_t rx_queue_tail;
     uint32_t rx_queue_count;
     uint8_t mac[6];
-    uint8_t probe_frame[E1000_TX_BUFFER_SIZE];
-    uint32_t probe_length;
-    uint32_t probe_attempts;
-    size_t probe_next_tick;
-    bool probe_pending;
     spinlock_t lock;
     struct e1000_stats stats;
     bool ready;
@@ -319,8 +314,6 @@ e1000_selftest(void) {
     for (i = 14; i < E1000_SELFTEST_LENGTH; i++) {
         e1000.tx_buffer[i] = (uint8_t)(0xA0U + i);
     }
-    memcpy(e1000.probe_frame, e1000.tx_buffer, E1000_SELFTEST_LENGTH);
-    e1000.probe_length = E1000_SELFTEST_LENGTH;
     desc = &e1000.tx_ring[slot];
     desc->buffer_addr = page2pa(e1000.tx_page);
     desc->length = E1000_SELFTEST_LENGTH;
@@ -336,10 +329,6 @@ e1000_selftest(void) {
         if ((desc->status & E1000_TXD_STAT_DD) != 0) {
             e1000.tx_index = next;
             e1000.stats.tx_packets++;
-            /* QEMU intentionally holds newly enabled RX queues behind a
-             * one-second receive flush timer.  TX write-back is the
-             * synchronous part of probe; RX is drained by e1000_poll() from
-             * timer interrupts after the kernel has enabled the clock. */
             return 0;
         }
         asm volatile ("pause");
@@ -404,6 +393,11 @@ e1000_init(void) {
         return;
     }
     ret = e1000_selftest();
+    /* TX DMA completion is the probe criterion.  Leave PHY loopback before
+     * exposing the device to the network stack; otherwise an early ARP
+     * request can be reflected locally and never reach the QEMU backend. */
+    (void)e1000_phy_write(E1000_PHY_BMCR,
+                          E1000_PHY_SPEED_1000 | E1000_PHY_FULL_DUPLEX);
     if (ret != 0) {
         e1000.ready = 0;
         e1000.stats.present = 0;
@@ -413,10 +407,6 @@ e1000_init(void) {
                 device->bus, device->slot, device->function, ret);
         return;
     }
-    /* Keep loopback enabled until the deferred RX probe has completed. */
-    e1000.probe_pending = 1;
-    e1000.probe_attempts = 0;
-    e1000.probe_next_tick = 0;
     cprintf("e1000: %02x:%02x.%u ready, MAC %02x:%02x:%02x:%02x:%02x:%02x, link %s\n",
             device->bus, device->slot, device->function,
             e1000.mac[0], e1000.mac[1], e1000.mac[2], e1000.mac[3],
@@ -427,8 +417,6 @@ void
 e1000_poll(void) {
     volatile struct e1000_rx_desc *desc;
     uint32_t old_index;
-    bool retry_probe = 0;
-    bool finish_probe = 0;
     bool intr_flag;
     if (!e1000.ready) {
         return;
@@ -468,37 +456,8 @@ e1000_poll(void) {
         /* RDT names the last descriptor returned to hardware. */
         e1000_write(E1000_REG_RDT, old_index);
     }
-    if (e1000.probe_pending) {
-        if (e1000.stats.rx_packets != 0) {
-            e1000.probe_pending = 0;
-            finish_probe = 1;
-        }
-        else if (e1000.probe_attempts < E1000_RX_PROBE_RETRIES) {
-            if (e1000.probe_next_tick == 0) {
-                e1000.probe_next_tick = ticks + E1000_RX_PROBE_DELAY_TICKS;
-            }
-            else if (ticks >= e1000.probe_next_tick) {
-                e1000.probe_attempts++;
-                e1000.probe_next_tick = ticks + E1000_RX_PROBE_DELAY_TICKS;
-                retry_probe = 1;
-            }
-        }
-        else {
-            /* A missing external loopback must not leave production traffic
-             * trapped in PHY loopback forever. */
-            e1000.probe_pending = 0;
-            finish_probe = 1;
-        }
-    }
     spin_unlock(&e1000.lock);
     local_intr_restore(intr_flag);
-    if (retry_probe) {
-        (void)e1000_transmit(e1000.probe_frame, e1000.probe_length);
-    }
-    if (finish_probe) {
-        (void)e1000_phy_write(E1000_PHY_BMCR,
-                              E1000_PHY_SPEED_1000 | E1000_PHY_FULL_DUPLEX);
-    }
 }
 
 int
@@ -522,6 +481,12 @@ e1000_receive(void *data, size_t capacity) {
     frame = &e1000.rx_queue[e1000.rx_queue_head];
     length = frame->length;
     if (length > capacity) {
+        /* Consume an oversized frame so one hostile/jumbo packet cannot
+         * permanently pin the software queue. */
+        e1000.rx_queue_head =
+            (e1000.rx_queue_head + 1) % E1000_RX_QUEUE_LEN;
+        e1000.rx_queue_count--;
+        e1000.stats.rx_errors++;
         spin_unlock(&e1000.lock);
         local_intr_restore(intr_flag);
         return -E_TOO_BIG;
@@ -538,6 +503,19 @@ e1000_receive(void *data, size_t capacity) {
 bool
 e1000_present(void) {
     return e1000.stats.present != 0;
+}
+
+void
+e1000_get_mac(uint8_t mac[6]) {
+    bool intr_flag;
+    if (mac == NULL) {
+        return;
+    }
+    local_intr_save(intr_flag);
+    spin_lock(&e1000.lock);
+    memcpy(mac, e1000.mac, sizeof(e1000.mac));
+    spin_unlock(&e1000.lock);
+    local_intr_restore(intr_flag);
 }
 
 int

@@ -138,6 +138,7 @@ pci_bar_size(const struct pci_device *device, int bar_index,
     uint32_t mask_high = 0;
     uint64_t size;
     uint8_t offset;
+    uint32_t command;
 
     if (device == NULL || size_store == NULL || bar_index < 0 ||
         bar_index >= PCI_BAR_COUNT) {
@@ -149,6 +150,12 @@ pci_bar_size(const struct pci_device *device, int bar_index,
         return -E_NA_DEV;
     }
     offset = (uint8_t)(PCI_BAR0 + bar_index * 4);
+    command = pci_config_read32(device->bus, device->slot,
+                                device->function, PCI_COMMAND & ~3);
+    /* PCI requires memory/I/O decoding to be disabled while a BAR is probed. */
+    pci_config_write32(device->bus, device->slot, device->function,
+                       PCI_COMMAND & ~3,
+                       command & ~(PCI_COMMAND_MEMORY | 0x0001U));
     if ((original_low & PCI_BAR_IO) != 0) {
         pci_config_write32(device->bus, device->slot, device->function,
                            offset, 0xFFFFFFFFU);
@@ -191,6 +198,8 @@ pci_bar_size(const struct pci_device *device, int bar_index,
             size = (uint64_t)(~mask_low + 1U);
         }
     }
+    pci_config_write32(device->bus, device->slot, device->function,
+                       PCI_COMMAND & ~3, command);
     if (size == 0 || size > 0xFFFFFFFFULL) {
         *size_store = 0;
         return -E_TOO_BIG;

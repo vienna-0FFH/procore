@@ -14,12 +14,58 @@
 #define NET_MAX_DATAGRAM             1472
 #endif
 
+#ifndef NET_MTU
+#define NET_MTU                      1500U
+#endif
+
+#ifndef NET_ETH_MIN_FRAME
+#define NET_ETH_MIN_FRAME             60U
+#endif
+
 #ifndef NET_EPHEMERAL_FIRST
 #define NET_EPHEMERAL_FIRST          49152
 #endif
 
 #ifndef NET_EPHEMERAL_LAST
 #define NET_EPHEMERAL_LAST           65535
+#endif
+
+/* Guest IPv4 policy.  Values use the same network-order representation as
+ * sockaddr_in: 10.0.2.15 is 0x0F02000A on this little-endian target. */
+#ifndef NET_LOCAL_IP
+#define NET_LOCAL_IP                 0x0F02000AU
+#endif
+
+#ifndef NET_NETMASK
+#define NET_NETMASK                  0x00FFFFFFU
+#endif
+
+#ifndef NET_GATEWAY_IP
+#define NET_GATEWAY_IP               0x0202000AU
+#endif
+
+#ifndef NET_RX_POLL_BUDGET
+#define NET_RX_POLL_BUDGET           8U
+#endif
+
+#ifndef NET_ARP_CACHE_SIZE
+#define NET_ARP_CACHE_SIZE           8U
+#endif
+
+#ifndef NET_ARP_TTL_TICKS
+#define NET_ARP_TTL_TICKS            6000U
+#endif
+
+#ifndef NET_ARP_REQUEST_RETRIES
+#define NET_ARP_REQUEST_RETRIES       2U
+#endif
+
+#ifndef NET_ARP_WAIT_TICKS
+#define NET_ARP_WAIT_TICKS             200U
+#endif
+
+#ifndef NET_IP_TTL
+#define NET_IP_TTL                   64U
 #endif
 
 #if NET_MAX_SOCKETS < 1
@@ -31,8 +77,23 @@
 #if NET_MAX_DATAGRAM < 1
 #error "NET_MAX_DATAGRAM must be positive"
 #endif
+#if NET_MTU < NET_MAX_DATAGRAM + 28
+#error "NET_MTU must fit an IPv4/UDP datagram and headers"
+#endif
+#if NET_ETH_MIN_FRAME < 60 || NET_ETH_MIN_FRAME > NET_MTU
+#error "NET_ETH_MIN_FRAME must fit the Ethernet minimum and MTU"
+#endif
 #if NET_EPHEMERAL_FIRST < 1024 || NET_EPHEMERAL_FIRST > NET_EPHEMERAL_LAST
 #error "invalid ephemeral port range"
+#endif
+#if NET_RX_POLL_BUDGET < 1
+#error "NET_RX_POLL_BUDGET must be positive"
+#endif
+#if NET_ARP_CACHE_SIZE < 1
+#error "NET_ARP_CACHE_SIZE must be positive"
+#endif
+#if NET_ARP_REQUEST_RETRIES < 1 || NET_ARP_WAIT_TICKS < 1
+#error "ARP resolution bounds must be positive"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */
