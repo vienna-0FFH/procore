@@ -22,9 +22,11 @@
 
 static inline uint8_t inb(uint16_t port) __attribute__((always_inline));
 static inline uint16_t inw(uint16_t port) __attribute__((always_inline));
+static inline uint32_t inl(uint16_t port) __attribute__((always_inline));
 static inline void insl(uint32_t port, void *addr, int cnt) __attribute__((always_inline));
 static inline void outb(uint16_t port, uint8_t data) __attribute__((always_inline));
 static inline void outw(uint16_t port, uint16_t data) __attribute__((always_inline));
+static inline void outl(uint16_t port, uint32_t data) __attribute__((always_inline));
 static inline void outsl(uint32_t port, const void *addr, int cnt) __attribute__((always_inline));
 static inline uint32_t read_ebp(void) __attribute__((always_inline));
 static inline void breakpoint(void) __attribute__((always_inline));
@@ -65,6 +67,13 @@ inw(uint16_t port) {
     return data;
 }
 
+static inline uint32_t
+inl(uint16_t port) {
+    uint32_t data;
+    asm volatile ("inl %1, %0" : "=a" (data) : "d" (port) : "memory");
+    return data;
+}
+
 static inline void
 insl(uint32_t port, void *addr, int cnt) {
     asm volatile (
@@ -83,6 +92,11 @@ outb(uint16_t port, uint8_t data) {
 static inline void
 outw(uint16_t port, uint16_t data) {
     asm volatile ("outw %0, %1" :: "a" (data), "d" (port) : "memory");
+}
+
+static inline void
+outl(uint16_t port, uint32_t data) {
+    asm volatile ("outl %0, %1" :: "a" (data), "d" (port) : "memory");
 }
 
 static inline void
@@ -307,4 +321,3 @@ __memcpy(void *dst, const void *src, size_t n) {
 #endif /* __HAVE_ARCH_MEMCPY */
 
 #endif /* !__LIBS_X86_H__ */
-

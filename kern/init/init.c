@@ -16,6 +16,8 @@
 #include <smp.h>
 #include <virt.h>
 #include <net.h>
+#include <pci.h>
+#include <e1000.h>
 
 int kern_init(void) __attribute__((noreturn));
 
@@ -36,6 +38,12 @@ kern_init(void) {
     grade_backtrace();
 
     pmm_init();                 // init physical memory management
+
+    /* Enumerate optional PCI devices before the address space and scheduler
+     * are brought online.  The e1000 driver is deliberately optional: a
+     * machine without a supported controller keeps the UDP loopback path. */
+    pci_init();
+    e1000_init();
 
     virt_init();                // probe VMX/VMM capabilities
 #if VIRT_SELFTEST

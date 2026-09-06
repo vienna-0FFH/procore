@@ -128,6 +128,13 @@ struct net_stats {
     uint32_t tx_packets;
     uint32_t rx_packets;
     uint32_t dropped_packets;
+    /* Hardware counters are zero when no supported NIC is present. */
+    uint32_t hw_devices;
+    uint32_t hw_link_up;
+    uint32_t hw_tx_packets;
+    uint32_t hw_rx_packets;
+    uint32_t hw_tx_errors;
+    uint32_t hw_rx_errors;
 };
 
 static inline uint16_t

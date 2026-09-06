@@ -1,5 +1,6 @@
 #include <defs.h>
 #include <error.h>
+#include <e1000.h>
 #include <kmalloc.h>
 #include <net.h>
 #include <stdio.h>
@@ -59,6 +60,16 @@ net_init(void) {
     net_next_port = NET_EPHEMERAL_FIRST;
     memset(&net_statistics, 0, sizeof(net_statistics));
     net_ready = 1;
+    {
+        struct e1000_stats hardware;
+        e1000_get_stats(&hardware);
+        net_statistics.hw_devices = hardware.present;
+        net_statistics.hw_link_up = hardware.link_up;
+        net_statistics.hw_tx_packets = hardware.tx_packets;
+        net_statistics.hw_rx_packets = hardware.rx_packets;
+        net_statistics.hw_tx_errors = hardware.tx_errors;
+        net_statistics.hw_rx_errors = hardware.rx_errors;
+    }
     cprintf("net: IPv4 UDP loopback ready\n");
 }
 
@@ -314,10 +325,18 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
 
 void
 net_get_stats(struct net_stats *stats) {
+    struct e1000_stats hardware;
     if (stats == NULL) {
         return;
     }
+    e1000_get_stats(&hardware);
     spin_lock(&net_socket_lock);
     *stats = net_statistics;
+    stats->hw_devices = hardware.present;
+    stats->hw_link_up = hardware.link_up;
+    stats->hw_tx_packets = hardware.tx_packets;
+    stats->hw_rx_packets = hardware.rx_packets;
+    stats->hw_tx_errors = hardware.tx_errors;
+    stats->hw_rx_errors = hardware.rx_errors;
     spin_unlock(&net_socket_lock);
 }
