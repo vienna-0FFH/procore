@@ -2,6 +2,7 @@
 #define __USER_LIBS_ULIB_H__
 
 #include <defs.h>
+#include <unistd.h>
 
 void __warn(const char *file, int line, const char *fmt, ...);
 void __noreturn __panic(const char *file, int line, const char *fmt, ...);

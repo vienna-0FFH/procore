@@ -18,6 +18,13 @@ int sys_getcpu(void);
 int sys_setaffinity(int pid, uint32_t mask);
 int sys_getaffinity(int pid, uint32_t *mask_store);
 int sys_getcpustat(int cpu, struct cpu_stat *stat);
+int sys_socket(int domain, int type, int protocol);
+int sys_bind(int fd, const struct sockaddr_in *address, size_t length);
+int sys_sendto(int fd, const void *data, size_t length,
+               const struct sockaddr_in *destination, size_t dest_length);
+int sys_recvfrom(int fd, void *data, size_t length,
+                 struct sockaddr_in *source, size_t source_length);
+int sys_netstat(struct net_stats *stats);
 int sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);
 int sys_munmap(void *addr, size_t len);
 int sys_brk(uintptr_t newbrk);

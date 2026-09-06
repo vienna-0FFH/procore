@@ -6,10 +6,13 @@
 #include <proc.h>
 #include <atomic.h>
 #include <assert.h>
+#include <unistd.h>
 
 struct inode;
 struct stat;
 struct dirent;
+struct net_socket;
+struct sockaddr_in;
 
 struct file {
     enum {
@@ -19,7 +22,10 @@ struct file {
     bool writable;
     int fd;
     off_t pos;
-    struct inode *node;
+    union {
+        struct inode *node;
+        struct net_socket *socket;
+    } object;
     volatile int open_count;
 };
 
@@ -40,6 +46,17 @@ int file_getdirentry(int fd, struct dirent *dirent);
 int file_dup(int fd1, int fd2);
 int file_pipe(int fd[]);
 int file_mkfifo(const char *name, uint32_t open_flags);
+int file_socket_create(int domain, int type, int protocol);
+int file_socket_bind(int fd, const struct sockaddr_in *address, size_t length);
+int file_socket_sendto(int fd, const void *data, size_t length,
+                       const struct sockaddr_in *destination, size_t dest_length);
+int file_socket_recvfrom(int fd, void *data, size_t length,
+                         struct sockaddr_in *source, size_t *source_length);
+
+#define file_node(file)       ((file)->object.node)
+#define file_socket(file)     ((file)->object.socket)
+#define FILE_SOCKET_POS       ((off_t)-1)
+#define file_is_socket(file)  ((file)->pos == FILE_SOCKET_POS)
 
 static inline int
 fopen_count(struct file *file) {

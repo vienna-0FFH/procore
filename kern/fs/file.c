@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <error.h>
 #include <assert.h>
+#include <net.h>
 
 #define testfd(fd)                          ((fd) >= 0 && (fd) < FILES_STRUCT_NENTRY)
 
@@ -29,6 +30,7 @@ fd_array_init(struct file *fd_array) {
     for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++, file ++) {
         file->open_count = 0;
         file->status = FD_NONE, file->fd = fd;
+        file->object.node = NULL;
     }
 }
 
@@ -57,7 +59,7 @@ fd_array_alloc(int fd, struct file **file_store) {
     }
 found:
     assert(fopen_count(file) == 0);
-    file->status = FD_INIT, file->node = NULL;
+    file->status = FD_INIT, file->object.node = NULL;
     *file_store = file;
     return 0;
 }
@@ -68,8 +70,14 @@ fd_array_free(struct file *file) {
     assert(file->status == FD_INIT || file->status == FD_CLOSED);
     assert(fopen_count(file) == 0);
     if (file->status == FD_CLOSED) {
-        vfs_close(file->node);
+        if (file_is_socket(file)) {
+        net_socket_put(file_socket(file));
+        }
+        else {
+            vfs_close(file_node(file));
+        }
     }
+    file->object.node = NULL;
     file->status = FD_NONE;
 }
 
@@ -92,7 +100,8 @@ fd_array_release(struct file *file) {
 // fd_array_open - file's open_count++, set status to FD_OPENED
 void
 fd_array_open(struct file *file) {
-    assert(file->status == FD_INIT && file->node != NULL);
+    assert(file->status == FD_INIT &&
+           file_node(file) != NULL || file_is_socket(file));
     file->status = FD_OPENED;
     fopen_count_inc(file);
 }
@@ -116,9 +125,15 @@ fd_array_dup(struct file *to, struct file *from) {
     to->pos = from->pos;
     to->readable = from->readable;
     to->writable = from->writable;
-    struct inode *node = from->node;
-    vop_ref_inc(node), vop_open_inc(node);
-    to->node = node;
+    if (file_is_socket(from)) {
+        file_socket(to) = file_socket(from);
+        net_socket_get(file_socket(to));
+    }
+    else {
+        struct inode *node = file_node(from);
+        vop_ref_inc(node), vop_open_inc(node);
+        file_node(to) = node;
+    }
     fd_array_open(to);
 }
 
@@ -189,7 +204,7 @@ file_open(char *path, uint32_t open_flags) {
         file->pos = stat->st_size;
     }
 
-    file->node = node;
+    file_node(file) = node;
     file->readable = readable;
     file->writable = writable;
     fd_array_open(file);
@@ -223,7 +238,7 @@ file_read(int fd, void *base, size_t len, size_t *copied_store) {
     fd_array_acquire(file);
 
     struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
-    ret = vop_read(file->node, iob);
+    ret = vop_read(file_node(file), iob);
 
     size_t copied = iobuf_used(iob);
     if (file->status == FD_OPENED) {
@@ -249,7 +264,7 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
     fd_array_acquire(file);
 
     struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
-    ret = vop_write(file->node, iob);
+    ret = vop_write(file_node(file), iob);
 
     size_t copied = iobuf_used(iob);
     if (file->status == FD_OPENED) {
@@ -275,7 +290,7 @@ file_seek(int fd, off_t pos, int whence) {
     case LSEEK_SET: break;
     case LSEEK_CUR: pos += file->pos; break;
     case LSEEK_END:
-        if ((ret = vop_fstat(file->node, stat)) == 0) {
+        if ((ret = vop_fstat(file_node(file), stat)) == 0) {
             pos += stat->st_size;
         }
         break;
@@ -283,7 +298,7 @@ file_seek(int fd, off_t pos, int whence) {
     }
 
     if (ret == 0) {
-        if ((ret = vop_tryseek(file->node, pos)) == 0) {
+        if ((ret = vop_tryseek(file_node(file), pos)) == 0) {
             file->pos = pos;
         }
 //    cprintf("file_seek, pos=%d, whence=%d, ret=%d\n", pos, whence, ret);
@@ -301,7 +316,7 @@ file_fstat(int fd, struct stat *stat) {
         return ret;
     }
     fd_array_acquire(file);
-    ret = vop_fstat(file->node, stat);
+    ret = vop_fstat(file_node(file), stat);
     fd_array_release(file);
     return ret;
 }
@@ -315,7 +330,7 @@ file_fsync(int fd) {
         return ret;
     }
     fd_array_acquire(file);
-    ret = vop_fsync(file->node);
+    ret = vop_fsync(file_node(file));
     fd_array_release(file);
     return ret;
 }
@@ -331,7 +346,7 @@ file_getdirentry(int fd, struct dirent *direntp) {
     fd_array_acquire(file);
 
     struct iobuf __iob, *iob = iobuf_init(&__iob, direntp->name, sizeof(direntp->name), direntp->offset);
-    if ((ret = vop_getdirentry(file->node, iob)) == 0) {
+    if ((ret = vop_getdirentry(file_node(file), iob)) == 0) {
         direntp->offset += iobuf_used(iob);
     }
     fd_array_release(file);
@@ -353,4 +368,76 @@ file_dup(int fd1, int fd2) {
     return file2->fd;
 }
 
+int
+file_socket_create(int domain, int type, int protocol) {
+    struct file *file;
+    struct net_socket *socket;
+    int ret;
 
+    if ((ret = fd_array_alloc(NO_FD, &file)) != 0) {
+        return ret;
+    }
+    socket = net_socket_create(domain, type, protocol);
+    if (socket == NULL) {
+        fd_array_free(file);
+        return -E_NO_MEM;
+    }
+    file->readable = 1;
+    file->writable = 1;
+    file->pos = FILE_SOCKET_POS;
+    file_socket(file) = socket;
+    fd_array_open(file);
+    return file->fd;
+}
+
+static int
+file_socket_get(int fd, struct file **file_store) {
+    int ret = fd2file(fd, file_store);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!file_is_socket(*file_store) || file_socket(*file_store) == NULL) {
+        return -E_INVAL;
+    }
+    return 0;
+}
+
+int
+file_socket_bind(int fd, const struct sockaddr_in *address, size_t length) {
+    struct file *file;
+    int ret = file_socket_get(fd, &file);
+    if (ret == 0) {
+        fd_array_acquire(file);
+        ret = net_socket_bind(file_socket(file), address, length);
+        fd_array_release(file);
+    }
+    return ret;
+}
+
+int
+file_socket_sendto(int fd, const void *data, size_t length,
+                   const struct sockaddr_in *destination, size_t dest_length) {
+    struct file *file;
+    int ret = file_socket_get(fd, &file);
+    if (ret == 0) {
+        fd_array_acquire(file);
+        ret = net_socket_sendto(file_socket(file), data, length,
+                                destination, dest_length);
+        fd_array_release(file);
+    }
+    return ret;
+}
+
+int
+file_socket_recvfrom(int fd, void *data, size_t length,
+                     struct sockaddr_in *source, size_t *source_length) {
+    struct file *file;
+    int ret = file_socket_get(fd, &file);
+    if (ret == 0) {
+        fd_array_acquire(file);
+        ret = net_socket_recvfrom(file_socket(file), data, length,
+                                  source, source_length);
+        fd_array_release(file);
+    }
+    return ret;
+}

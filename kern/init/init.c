@@ -15,6 +15,7 @@
 #include <fs.h>
 #include <smp.h>
 #include <virt.h>
+#include <net.h>
 
 int kern_init(void) __attribute__((noreturn));
 
@@ -53,6 +54,7 @@ kern_init(void) {
     ide_init();                 // init ide devices
     swap_init();                // init swap
     fs_init();                  // init fs
+    net_init();                 // init loopback UDP service
     
     clock_init();               // init clock interrupt
     intr_enable();              // enable irq interrupt

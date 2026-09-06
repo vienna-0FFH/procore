@@ -151,6 +151,7 @@ $(foreach p,$(call read_packet,uprog),$(eval $(call uprog_ld,$(p))))
 
 KINCLUDE	+= kern/debug/ \
 			   kern/driver/ \
+			   kern/net/ \
 			   kern/smp/ \
 			   kern/virt/ \
 			   kern/trap/ \
@@ -171,6 +172,7 @@ KSRCDIR		+= kern/init \
 			   kern/libs \
 			   kern/debug \
 			   kern/driver \
+			   kern/net \
 			   kern/smp \
 			   kern/virt \
 			   kern/trap \

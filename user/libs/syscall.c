@@ -113,6 +113,35 @@ sys_getcpustat(int cpu, struct cpu_stat *stat) {
 }
 
 int
+sys_socket(int domain, int type, int protocol) {
+    return syscall3(SYS_socket, domain, type, protocol);
+}
+
+int
+sys_bind(int fd, const struct sockaddr_in *address, size_t length) {
+    return syscall3(SYS_bind, fd, (uintptr_t)address, length);
+}
+
+int
+sys_sendto(int fd, const void *data, size_t length,
+           const struct sockaddr_in *destination, size_t dest_length) {
+    return syscall5(SYS_sendto, fd, (uintptr_t)data, length,
+                    (uintptr_t)destination, dest_length);
+}
+
+int
+sys_recvfrom(int fd, void *data, size_t length,
+             struct sockaddr_in *source, size_t source_length) {
+    return syscall5(SYS_recvfrom, fd, (uintptr_t)data, length,
+                    (uintptr_t)source, source_length);
+}
+
+int
+sys_netstat(struct net_stats *stats) {
+    return syscall1(SYS_netstat, (uintptr_t)stats);
+}
+
+int
 sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
     return syscall4(SYS_mmap, (uintptr_t)addr, len, prot, flags);
 }

@@ -13,6 +13,8 @@
 #include <sysfile.h>
 #include <error.h>
 #include <smp.h>
+#include <net.h>
+#include <file.h>
 
 static int
 sys_exit(uint32_t arg[]) {
@@ -367,6 +369,105 @@ sys_dup(uint32_t arg[]) {
     return sysfile_dup(fd1, fd2);
 }
 
+static int
+sys_socket(uint32_t arg[]) {
+    return file_socket_create((int)arg[0], (int)arg[1], (int)arg[2]);
+}
+
+static int
+sys_bind(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in address;
+    int ret;
+
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    ret = copy_from_user(mm, &address, (void *)arg[1], sizeof(address), 0);
+    unlock_mm(mm);
+    if (!ret) {
+        return -E_INVAL;
+    }
+    return file_socket_bind((int)arg[0], &address, (size_t)arg[2]);
+}
+
+static int
+sys_sendto(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in destination;
+    void *buffer;
+    size_t length = (size_t)arg[2];
+    int ret;
+
+    if (mm == NULL || length == 0 || length > NET_MAX_DATAGRAM) {
+        return -E_INVAL;
+    }
+    if ((buffer = kmalloc(length)) == NULL) {
+        return -E_NO_MEM;
+    }
+    lock_mm(mm);
+    ret = copy_from_user(mm, buffer, (void *)arg[1], length, 0) &&
+          copy_from_user(mm, &destination, (void *)arg[3],
+                         sizeof(destination), 0);
+    unlock_mm(mm);
+    if (!ret) {
+        kfree(buffer);
+        return -E_INVAL;
+    }
+    ret = file_socket_sendto((int)arg[0], buffer, length,
+                             &destination, (size_t)arg[4]);
+    kfree(buffer);
+    return ret;
+}
+
+static int
+sys_recvfrom(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in source;
+    size_t source_length = sizeof(source);
+    void *buffer;
+    size_t length = (size_t)arg[2];
+    int ret;
+
+    if (mm == NULL || length == 0 || length > NET_MAX_DATAGRAM) {
+        return -E_INVAL;
+    }
+    if ((buffer = kmalloc(length)) == NULL) {
+        return -E_NO_MEM;
+    }
+    ret = file_socket_recvfrom((int)arg[0], buffer, length,
+                               &source, &source_length);
+    if (ret > 0) {
+        lock_mm(mm);
+        if (!copy_to_user(mm, (void *)arg[1], buffer, (size_t)ret) ||
+            !copy_to_user(mm, (void *)arg[3], &source, sizeof(source))) {
+            ret = -E_INVAL;
+        }
+        unlock_mm(mm);
+    }
+    kfree(buffer);
+    return ret;
+}
+
+static int
+sys_netstat(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct net_stats stats;
+
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    net_get_stats(&stats);
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[0], &stats, sizeof(stats))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
 static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_exit]              sys_exit,
     [SYS_fork]              sys_fork,
@@ -405,6 +506,11 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_getcwd]            sys_getcwd,
     [SYS_getdirentry]       sys_getdirentry,
     [SYS_dup]               sys_dup,
+    [SYS_socket]            sys_socket,
+    [SYS_bind]              sys_bind,
+    [SYS_sendto]            sys_sendto,
+    [SYS_recvfrom]          sys_recvfrom,
+    [SYS_netstat]           sys_netstat,
 };
 
 #define NUM_SYSCALLS        ((sizeof(syscalls)) / (sizeof(syscalls[0])))

@@ -1,6 +1,8 @@
 #ifndef __LIBS_UNISTD_H__
 #define __LIBS_UNISTD_H__
 
+#include <defs.h>
+
 #define T_SYSCALL           0x80
 
 /* syscall number */
@@ -24,6 +26,11 @@
 #define SYS_setaffinity     26
 #define SYS_getaffinity     27
 #define SYS_getcpustat      28
+#define SYS_socket          140
+#define SYS_bind            141
+#define SYS_sendto          142
+#define SYS_recvfrom        143
+#define SYS_netstat         144
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -101,5 +108,36 @@ struct cpu_stat {
 
 #define EXEC_MAX_ARG_NUM    32
 #define EXEC_MAX_ARG_LEN    4095
+
+/* Minimal IPv4 datagram ABI.  Ports use network byte order. */
+#define AF_INET             2
+#define SOCK_DGRAM          2
+#define IPPROTO_UDP         17
+#define INADDR_ANY          0U
+#define INADDR_LOOPBACK     0x0100007FU
+
+struct sockaddr_in {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t sin_zero[8];
+};
+
+struct net_stats {
+    uint32_t sockets;
+    uint32_t tx_packets;
+    uint32_t rx_packets;
+    uint32_t dropped_packets;
+};
+
+static inline uint16_t
+htons(uint16_t value) {
+    return (uint16_t)((value << 8) | (value >> 8));
+}
+
+static inline uint16_t
+ntohs(uint16_t value) {
+    return htons(value);
+}
 
 #endif /* !__LIBS_UNISTD_H__ */

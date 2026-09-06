@@ -15,6 +15,7 @@ fs_init(void) {
     sfs_init();
 }
 
+
 void
 fs_cleanup(void) {
     vfs_cleanup();
@@ -96,4 +97,3 @@ dup_fs(struct files_struct *to, struct files_struct *from) {
     }
     return 0;
 }
-
