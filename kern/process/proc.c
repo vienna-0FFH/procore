@@ -228,6 +228,7 @@ proc_run(struct proc_struct *proc) {
             smp_switch_begin(prev);
             current = proc;
             load_esp0(next->kstack + KSTACKSIZE);
+            smp_publish_cr3(smp_current_cpu(), next->cr3);
             lcr3(next->cr3);
             switch_to(&(prev->context), &(next->context));
         }
@@ -633,6 +634,7 @@ do_exit(int error_code) {
     
     struct mm_struct *mm = current->mm;
     if (mm != NULL) {
+        smp_publish_cr3(smp_current_cpu(), boot_cr3);
         lcr3(boot_cr3);
         if (mm_count_dec(mm) == 0) {
             exit_mmap(mm);
@@ -847,6 +849,7 @@ load_icode(int fd, int argc, char **kargv) {
     current->mm = mm;
     mm_count_inc(mm);
     current->cr3 = PADDR(mm->pgdir);
+    smp_publish_cr3(smp_current_cpu(), current->cr3);
     lcr3(PADDR(mm->pgdir));
 
     //setup argc, argv
@@ -963,6 +966,7 @@ do_execve(const char *name, int argc, const char **argv) {
         goto execve_exit;
     }
     if (mm != NULL) {
+        smp_publish_cr3(smp_current_cpu(), boot_cr3);
         lcr3(boot_cr3);
         if (mm_count_dec(mm) == 0) {
             exit_mmap(mm);

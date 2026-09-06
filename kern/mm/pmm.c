@@ -617,11 +617,10 @@ page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm) {
 // edited are the ones currently in use by the processor.
 void
 tlb_invalidate(pde_t *pgdir, uintptr_t la) {
-    bool loaded = (rcr3() == PADDR(pgdir));
-    if (loaded) {
+    if (rcr3() == PADDR(pgdir)) {
         invlpg((void *)la);
-        smp_tlb_shootdown(pgdir, la);
     }
+    smp_tlb_shootdown(pgdir, la);
 }
 
 // pgdir_alloc_page - call alloc_page & page_insert functions to 

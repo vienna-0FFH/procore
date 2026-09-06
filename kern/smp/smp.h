@@ -17,6 +17,7 @@ void smp_lapic_eoi(void);
 struct proc_struct **smp_current_ptr(void);
 struct proc_struct **smp_idle_ptr(void);
 void smp_set_current(int cpu, struct proc_struct *proc);
+void smp_publish_cr3(int cpu, uintptr_t cr3);
 void smp_set_idle(int cpu, struct proc_struct *proc);
 void smp_set_esp0(uintptr_t esp0);
 void smp_start_cpus(void);

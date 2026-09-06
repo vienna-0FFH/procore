@@ -59,6 +59,7 @@ static struct Page *smp_ap_stacks[SMP_MAX_CPUS];
 static uintptr_t smp_ap_stack_tops[SMP_MAX_CPUS];
 static struct proc_struct *smp_current_procs[SMP_MAX_CPUS];
 static struct proc_struct *smp_idle_procs[SMP_MAX_CPUS];
+static volatile uintptr_t smp_current_cr3[SMP_MAX_CPUS];
 static struct cpu_stat smp_cpu_stats[SMP_MAX_CPUS];
 static uintptr_t smp_lapic_pa = SMP_LAPIC_DEFAULT_PA;
 static uintptr_t smp_trampoline_pa = SMP_TRAMPOLINE_PA;
@@ -134,6 +135,14 @@ void
 smp_set_current(int cpu, struct proc_struct *proc) {
     if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
         smp_current_procs[cpu] = proc;
+        smp_current_cr3[cpu] = proc != NULL ? proc->cr3 : boot_cr3;
+    }
+}
+
+void
+smp_publish_cr3(int cpu, uintptr_t cr3) {
+    if (cpu >= 0 && cpu < SMP_MAX_CPUS) {
+        smp_current_cr3[cpu] = cr3;
     }
 }
 
@@ -517,7 +526,7 @@ void
 smp_tlb_shootdown(pde_t *pgdir, uintptr_t la) {
     int self, cpu;
 
-    if (!smp_enabled || pgdir == NULL) {
+    if (!smp_enabled || !smp_scheduler_started || pgdir == NULL) {
         return;
     }
     self = smp_current_cpu();
@@ -531,11 +540,10 @@ smp_tlb_shootdown(pde_t *pgdir, uintptr_t la) {
         uint32_t sequence, timeout;
 
         if (cpu == self || smp_online[cpu] == 0 ||
-            smp_current_procs[cpu] == NULL ||
-            smp_current_procs[cpu]->pid == 0 ||
-            smp_current_procs[cpu]->cr3 != PADDR(pgdir)) {
-            /* A CPU with no current task, or with another address space
-             * loaded, cannot have a stale TLB entry for this pgdir. */
+            smp_current_cr3[cpu] != PADDR(pgdir)) {
+            /* A CPU with another CR3 loaded cannot have a stale TLB entry
+             * for this pgdir.  CR3 is published before each context switch,
+             * so this check never dereferences a reclaimable proc object. */
             continue;
         }
         request = &smp_tlb_requests[cpu];
@@ -702,6 +710,7 @@ smp_init(void) {
     spin_init(&smp_tlb_lock);
     smp_tlb_sequence = 0;
     memset((void *)smp_tlb_requests, 0, sizeof(smp_tlb_requests));
+    memset((void *)smp_current_cr3, 0, sizeof(smp_current_cr3));
     memset((void *)smp_cpu_stats, 0, sizeof(smp_cpu_stats));
     smp_load_cpu_gdt(0, (uintptr_t)bootstacktop);
 
