@@ -540,48 +540,35 @@ int
 copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share) {
     assert(start % PGSIZE == 0 && end % PGSIZE == 0);
     assert(USER_ACCESS(start, end));
-    // copy content by page unit.
+    /* Share present pages for fork().  Writable mappings are marked COW in
+     * both address spaces; read-only mappings can be shared as-is. */
     do {
-        //call get_pte to find process A's pte according to the addr start
         pte_t *ptep = get_pte(from, start, 0), *nptep;
         if (ptep == NULL) {
             start = ROUNDDOWN(start + PTSIZE, PTSIZE);
             continue ;
         }
-        //call get_pte to find process B's pte according to the addr start. If pte is NULL, just alloc a PT
-        if (*ptep & PTE_P) {
+        if (*ptep != 0) {
+            pte_t source = *ptep;
             if ((nptep = get_pte(to, start, 1)) == NULL) {
                 return -E_NO_MEM;
             }
-        uint32_t perm = (*ptep & PTE_USER);
-        //get page from ptep
-        struct Page *page = pte2page(*ptep);
-        // alloc a page for process B
-        struct Page *npage=alloc_page();
-        assert(page!=NULL);
-        assert(npage!=NULL);
-        int ret=0;
-        /* core:implementation2 implementation
-         * replicate content of page to npage, build the map of phy addr of nage with the linear addr start
-         *
-         * Some Useful MACROs and DEFINEs, you can use them in below implementation.
-         * MACROs or Functions:
-         *    page2kva(struct Page *page): return the kernel vritual addr of memory which page managed (SEE pmm.h)
-         *    page_insert: build the map of phy addr of an Page with the linear addr la
-         *    memcpy: typical memory copy function
-         *
-         * (1) find src_kvaddr: the kernel virtual address of page
-         * (2) find dst_kvaddr: the kernel virtual address of npage
-         * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
-         * (4) build the map of phy addr of  nage with the linear addr start
-         */
-        void * kva_src = page2kva(page);
-        void * kva_dst = page2kva(npage);
-    
-        memcpy(kva_dst, kva_src, PGSIZE);
-
-        ret = page_insert(to, npage, start, perm);
-        assert(ret == 0);
+            if (source & PTE_P) {
+                struct Page *page = pte2page(source);
+                uint32_t perm = source & (PTE_USER | PTE_COW);
+                if (!share && (source & PTE_W)) {
+                    source = (source & ~PTE_W) | PTE_COW;
+                    *ptep = source;
+                    perm = source & (PTE_USER | PTE_COW);
+                    tlb_invalidate(from, start);
+                }
+                page_ref_inc(page);
+                *nptep = page2pa(page) | perm;
+            }
+            else {
+                /* Preserve a swap entry for the child. */
+                *nptep = source;
+            }
         }
         start += PGSIZE;
     } while (start != 0 && start < end);
@@ -630,8 +617,10 @@ page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm) {
 // edited are the ones currently in use by the processor.
 void
 tlb_invalidate(pde_t *pgdir, uintptr_t la) {
-    if (rcr3() == PADDR(pgdir)) {
+    bool loaded = (rcr3() == PADDR(pgdir));
+    if (loaded) {
         invlpg((void *)la);
+        smp_tlb_shootdown(pgdir, la);
     }
 }
 

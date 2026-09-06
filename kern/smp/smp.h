@@ -2,6 +2,7 @@
 #define __KERN_SMP_SMP_H__
 
 #include <defs.h>
+#include <mmu.h>
 #include <smp_config.h>
 
 struct proc_struct;
@@ -20,6 +21,8 @@ void smp_set_esp0(uintptr_t esp0);
 void smp_start_cpus(void);
 void smp_send_reschedule(void);
 void smp_send_reschedule_cpu(int cpu_index);
+void smp_tlb_shootdown(pde_t *pgdir, uintptr_t la);
+void smp_handle_tlb_ipi(void);
 void smp_switch_begin(struct proc_struct *proc);
 struct proc_struct *smp_switch_take(void);
 

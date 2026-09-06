@@ -186,7 +186,17 @@ pgfault_handler(struct trapframe *tf) {
         }
         mm = current->mm;
     }
-    return do_pgfault(mm, tf->tf_err, rcr2());
+    int ret;
+    if (mm != NULL) {
+        /* Fork and COW faults can run on different CPUs at the same time.
+         * Serialize VMA/PTE changes through the address-space semaphore. */
+        lock_mm(mm);
+    }
+    ret = do_pgfault(mm, tf->tf_err, rcr2());
+    if (mm != NULL) {
+        unlock_mm(mm);
+    }
+    return ret;
 }
 
 static volatile int in_swap_tick_event = 0;
@@ -257,6 +267,9 @@ trap_dispatch(struct trapframe *tf) {
             current->need_resched = 1;
         }
         smp_lapic_eoi();
+        break;
+    case SMP_IPI_TLB_VECTOR:
+        smp_handle_tlb_ipi();
         break;
     case SMP_APIC_SPURIOUS_VECTOR:
         smp_lapic_eoi();

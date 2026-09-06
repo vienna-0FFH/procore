@@ -245,6 +245,12 @@ struct taskstate {
                                                 // The PTE_AVAIL bits aren't used by the kernel or interpreted by the
                                                 // hardware, so user processes are allowed to set them arbitrarily.
 
+/* A private writable mapping shared by fork() uses this software bit while
+ * both address spaces point at the same physical page.  It is deliberately
+ * outside the hardware permission bits, so the CPU still raises a write
+ * fault and the kernel can perform the copy-on-write transition. */
+#define PTE_COW         0x200
+
 #define PTE_USER        (PTE_U | PTE_W | PTE_P)
 
 /* Control Register flags */
@@ -269,4 +275,3 @@ struct taskstate {
 #define CR4_VME         0x00000001              // V86 Mode Extensions
 
 #endif /* !__KERN_MM_MMU_H__ */
-

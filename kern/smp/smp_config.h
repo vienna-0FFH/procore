@@ -40,6 +40,14 @@
 #define SMP_IPI_RESCHEDULE_VECTOR    0xF0
 #endif
 
+#ifndef SMP_IPI_TLB_VECTOR
+#define SMP_IPI_TLB_VECTOR           0xF1
+#endif
+
+#ifndef SMP_TLB_SHOOTDOWN_TIMEOUT
+#define SMP_TLB_SHOOTDOWN_TIMEOUT    1000000U
+#endif
+
 
 #if SMP_MAX_CPUS < 1
 #error "SMP_MAX_CPUS must be positive"

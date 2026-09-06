@@ -724,13 +724,36 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     }
     else {
         struct Page *page=NULL;
-        cprintf("do pgfault: ptep %x, pte %x\n",ptep, *ptep);
         if (*ptep & PTE_P) {
-            //if process write to this existed readonly page (PTE_P means existed), then should be here now.
-            //we can implement the delayed memory space copy for fork child process (AKA copy on write, COW).
-            //we didn't implement now, we will do it in future.
-            panic("error write a non-writable pte");
-            //page = pte2page(*ptep);
+            struct Page *old_page = pte2page(*ptep);
+            struct Page *new_page;
+
+            /* A present write fault is valid only for a private mapping
+             * created by fork().  Ordinary read-only pages remain errors. */
+            if ((*ptep & PTE_COW) == 0) {
+                cprintf("write fault on a non-COW page at %08x\n", addr);
+                goto failed;
+            }
+            if (page_ref(old_page) == 1) {
+                *ptep = (*ptep & ~PTE_COW) | PTE_W;
+                tlb_invalidate(mm->pgdir, addr);
+                ret = 0;
+                goto failed;
+            }
+            if ((new_page = alloc_page()) == NULL) {
+                goto failed;
+            }
+            memcpy(page2kva(new_page), page2kva(old_page), PGSIZE);
+            if (page_insert(mm->pgdir, new_page, addr, perm) != 0) {
+                free_page(new_page);
+                goto failed;
+            }
+            if (swap_init_ok) {
+                swap_map_swappable(mm, addr, new_page, 1);
+                new_page->pra_vaddr = addr;
+            }
+            ret = 0;
+            goto pgfault_done;
         } else{
            // if this pte is a swap entry, then load data from disk to a page with phy addr
            // and call page_insert to map the phy addr with logical addr
@@ -750,6 +773,7 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
        swap_map_swappable(mm, addr, page, 1);
        page->pra_vaddr = addr;
    }
+pgfault_done:
    ret = 0;
 failed:
     return ret;

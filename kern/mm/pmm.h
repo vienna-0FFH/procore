@@ -131,17 +131,14 @@ set_page_ref(struct Page *page, int val) {
 
 static inline int
 page_ref_inc(struct Page *page) {
-    page->ref += 1;
-    return page->ref;
+    return atomic_inc_return((volatile int *)&page->ref);
 }
 
 static inline int
 page_ref_dec(struct Page *page) {
-    page->ref -= 1;
-    return page->ref;
+    return atomic_dec_return((volatile int *)&page->ref);
 }
 
 extern char bootstack[], bootstacktop[];
 
 #endif /* !__KERN_MM_PMM_H__ */
-

@@ -12,6 +12,7 @@
 #include <smp_arch.h>
 #include <trap.h>
 #include <sched.h>
+#include <proc.h>
 
 struct mp_floating_pointer {
     char signature[4];
@@ -63,6 +64,17 @@ static volatile uint32_t smp_scheduler_started;
 static bool smp_enabled;
 static spinlock_t smp_ipi_lock;
 static struct proc_struct *smp_switch_pending[SMP_MAX_CPUS];
+
+struct smp_tlb_request {
+    volatile uint32_t sequence;
+    volatile uint32_t acknowledged;
+    pde_t *pgdir;
+    uintptr_t la;
+};
+
+static struct smp_tlb_request smp_tlb_requests[SMP_MAX_CPUS];
+static spinlock_t smp_tlb_lock;
+static volatile uint32_t smp_tlb_sequence;
 
 /* Each CPU needs a private TSS because ring transitions use its kernel stack. */
 static struct taskstate smp_tss[SMP_MAX_CPUS];
@@ -496,6 +508,80 @@ smp_send_reschedule_cpu(int cpu_index) {
     smp_lapic_send_ipi(smp_apic_ids[cpu_index], SMP_IPI_RESCHEDULE_VECTOR);
 }
 
+/* Invalidate a user page on every CPU that may still have the address space
+ * loaded.  The request is synchronous: fork() and COW fault handling can
+ * safely change a PTE only after all stale writable TLB entries are gone. */
+void
+smp_tlb_shootdown(pde_t *pgdir, uintptr_t la) {
+    int self, cpu;
+
+    if (!smp_enabled || pgdir == NULL) {
+        return;
+    }
+    self = smp_current_cpu();
+    if (self < 0 || self >= smp_ncpu) {
+        return;
+    }
+
+    spin_lock(&smp_tlb_lock);
+    for (cpu = 0; cpu < smp_ncpu; cpu++) {
+        struct smp_tlb_request *request;
+        uint32_t sequence, timeout;
+
+        if (cpu == self || smp_online[cpu] == 0 ||
+            smp_current_procs[cpu] == NULL ||
+            smp_current_procs[cpu]->pid == 0 ||
+            smp_current_procs[cpu]->cr3 != PADDR(pgdir)) {
+            /* A CPU with no current task, or with another address space
+             * loaded, cannot have a stale TLB entry for this pgdir. */
+            continue;
+        }
+        request = &smp_tlb_requests[cpu];
+        sequence = ++smp_tlb_sequence;
+        if (sequence == 0) {
+            sequence = ++smp_tlb_sequence;
+        }
+        request->pgdir = pgdir;
+        request->la = la;
+        barrier();
+        request->sequence = sequence;
+        barrier();
+        if (smp_lapic_send_ipi(smp_apic_ids[cpu], SMP_IPI_TLB_VECTOR) != 0) {
+            /* A failed delivery must not leave the next request waiting for
+             * an acknowledgement that can no longer arrive. */
+            request->acknowledged = sequence;
+            continue;
+        }
+        for (timeout = 0; request->acknowledged != sequence &&
+             timeout < SMP_TLB_SHOOTDOWN_TIMEOUT; timeout++) {
+            asm volatile ("pause");
+        }
+        if (request->acknowledged != sequence) {
+            cprintf("smp: TLB shootdown timeout on CPU%d\n", cpu);
+        }
+    }
+    spin_unlock(&smp_tlb_lock);
+}
+
+void
+smp_handle_tlb_ipi(void) {
+    int cpu = smp_current_cpu();
+    if (cpu >= 0 && cpu < smp_ncpu) {
+        struct smp_tlb_request *request = &smp_tlb_requests[cpu];
+        uint32_t sequence = request->sequence;
+        pde_t *pgdir = request->pgdir;
+        uintptr_t la = request->la;
+
+        barrier();
+        if (sequence != 0 && pgdir != NULL && rcr3() == PADDR(pgdir)) {
+            invlpg((void *)la);
+        }
+        barrier();
+        request->acknowledged = sequence;
+    }
+    smp_lapic_eoi();
+}
+
 static void
 smp_delay(void) {
     uint32_t i;
@@ -611,6 +697,9 @@ smp_init(void) {
     smp_enabled = 0;
     smp_scheduler_started = 0;
     spin_init(&smp_ipi_lock);
+    spin_init(&smp_tlb_lock);
+    smp_tlb_sequence = 0;
+    memset((void *)smp_tlb_requests, 0, sizeof(smp_tlb_requests));
     smp_load_cpu_gdt(0, (uintptr_t)bootstacktop);
 
     mpfp = smp_find_mpfp();
