@@ -80,12 +80,22 @@ make: aclocal: No such file or directory
 make: *** .../include/mk/automake.mk:31: aclocal.m4] Error 127
 ```
 
-WSL2 Ubuntu is now available on this host. A Linux out-of-tree build was
-started there using an LF-normalized temporary source tree, but it was
-intentionally stopped: compiling the complete Linux LTP suite produces Linux
-user-space binaries and does not test uCore. No Windows feature, distribution,
-or Docker daemon was changed during the audit. If a native Linux LTP run is
-needed later, the upstream path is:
+WSL2 Ubuntu is now available on this host. The out-of-tree Linux build uses
+the persistent paths below (outside this repository):
+
+```text
+source:  E:\project_learning\ltp-linux-src
+build:   E:\project_learning\ltp-linux-build
+install: E:\project_learning\ltp-linux-install
+```
+
+The build produced the common libraries and 1,553 syscall test binaries (1,870
+executable test artifacts in total). A continuation of `testcases-all` was
+given a 15-minute wall-clock limit; it reached the container/network-namespace
+families and was terminated by that limit with no compiler error. This is a
+build-time bound, not a test failure. No Windows feature, distribution, or
+Docker daemon was changed during the audit. If the complete native Linux build
+is needed later, the upstream path is:
 
 ```sh
 make autotools
@@ -98,6 +108,41 @@ the upstream binaries require Linux headers, glibc, a Linux ELF loader,
 `/proc`/`/sys`, signals, users/groups, and many privileged kernel interfaces.
 The passing table above therefore records uCore-adapted tests, while this
 section records the upstream source/build audit and its environment blockers.
+
+## Linux-host representative run
+
+The following binaries were run directly on WSL2 Ubuntu from the build tree,
+with `timeout --kill-after=5s 45s` around each process. They validate the
+upstream test harness and Linux behavior only; they are not uCore results.
+`TPASS` is the number of passing assertions printed by each test.
+
+| Test | Result | TPASS | Note |
+| --- | --- | ---: | --- |
+| `getpid01` | `PASS` | 100 | process identity |
+| `getppid01` | `PASS` | 1 | parent identity |
+| `gettid01` | `PASS` | 2 | thread identity |
+| `getcpu01` | `PASS` | 1 | CPU query |
+| `brk01` | `PASS` | 2 | heap boundary |
+| `clone01` | `PASS` | 2 | clone lifecycle |
+| `close01` | `PASS` | 3 | file/pipe/socket close |
+| `dup201` | `PASS` | 4 | invalid `dup2` descriptors |
+| `fork01` | `PASS` | 2 | fork lifecycle |
+| `lseek01` | `PASS` | 4 | file offset behavior |
+| `mmap01` | `PASS` | 1 | anonymous mapping |
+| `munmap01` | `PASS` | 2 | mapping removal |
+| `open01` | `PASS` | 2 | open error/success paths |
+| `read01` | `PASS` | 1 | read transfer |
+| `write01` | `PASS` | 1 | write transfer |
+| `socket01` | `PASS` | 9 | socket creation/error paths |
+| `wait01` | `PASS` | 1 | child wait |
+| `waitpid01` | `PASS` | 146 | waitpid matrix |
+| `chdir01` | `TCONF` | 0 | WSL user is not root |
+| `sched_setaffinity01` | `TCONF` | 0 | WSL CPU mask is restricted |
+
+No selected representative test reported `TFAIL` or `TBROK`. The two
+`TCONF` results are environment constraints and must not be counted as uCore
+failures or Linux kernel regressions. The corresponding uCore checks remain the
+programs listed in `tools/ltp-config.psd1` and are run by `tools/run-ltp.ps1`.
 
 ## Upstream syscall-family mapping
 
