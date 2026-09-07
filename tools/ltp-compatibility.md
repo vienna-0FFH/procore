@@ -97,3 +97,27 @@ the upstream binaries require Linux headers, glibc, a Linux ELF loader,
 `/proc`/`/sys`, signals, users/groups, and many privileged kernel interfaces.
 The passing table above therefore records uCore-adapted tests, while this
 section records the upstream source/build audit and its environment blockers.
+
+## Upstream syscall-family mapping
+
+The current upstream `runtest/syscalls` file contains 172 entries matching the
+families below. The mapping is by test intent, not by claiming that a Linux LTP
+binary can execute on uCore.
+
+| Upstream family | Representative upstream checks | uCore status | uCore entry point |
+| --- | --- | --- | --- |
+| `getpid`, `getppid`, `gettid` | range/parent relationship and single-thread tid equality | `PASS` for the supported semantics | `clonetest`, `hello` |
+| `getcpu`, `sched_setaffinity` | set an allowed CPU, query current CPU, reject invalid masks | `PASS` for the supported mask/counter ABI | `affinitytest`, `schedtest` |
+| `brk` | grow/shrink break and touch newly allocated pages | `PASS` for anonymous heap semantics | `mmaptest` |
+| `mmap`, `munmap` | anonymous mappings, page alignment, partial unmap and fault behavior | `PASS` for anonymous subset; file-backed and signal-fault cases are not implemented | `mmaptest` |
+| `chdir` | directory, missing path, permissions, symlink-loop cases | `PORT`/`PASS` for uCore VFS subset; permissions/symlink cases `NOT_IMPL` | `chdirtest`, `vfstest` |
+| `open`, `close`, `read`, `write`, `fstat` | descriptor errors, data transfer, metadata and lifecycle | `PASS` for supported SFS/device subset | `vfstest`, `fdsharetest` |
+| `dup`, `dup2`, `lseek` | invalid descriptors, replacement, self-dup, shared offset | `PASS` for the implemented descriptor-description model | `chdirtest`, `fdsharetest` |
+| `fork`, `clone`, `wait`, `waitpid` | child lifecycle, clone entry, parent wait and status | `PASS` for uCore's supported flags and status ABI | `clonetest`, `fdsharetest` |
+| `socket`, UDP send/receive | invalid domain/type cases plus datagram loopback | `PASS` for AF_INET/SOCK_DGRAM; TCP/UNIX/raw cases `NOT_IMPL` | `nettest` |
+
+The following upstream families deliberately remain outside the current uCore
+claim: `openat*`, `dup3`, `close_range`, `readv/writev`, signals, `execveat`,
+`/proc` and `/sys` inspection, user/group privilege transitions, namespaces,
+futexes, epoll, io_uring, filesystem mounts, and file-backed mmap. They need
+new ABI and kernel subsystems before a faithful port can be made.
