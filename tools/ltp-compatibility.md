@@ -50,3 +50,50 @@ ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
 `NOT_IMPL` until uCore grows the corresponding subsystem. They should not be
 reported as upstream-LTP passes merely because a similarly named uCore test
 exists.
+
+## Upstream LTP audit
+
+The upstream source was downloaded outside this repository at:
+
+```text
+E:\project_learning\ltp-upstream
+```
+
+The audited checkout is version `20260529`, commit
+`463b33ad464b6840d0a1df5d41939e50d55d542c`. Its syscall runfile contains the
+standard families relevant to this OS, including `brk`, `chdir`, `clone`,
+`close`, `dup`, `fork`, `getcpu`, `getpid`, `getppid`, `gettid`, `lseek`,
+`mmap`, `munmap`, `open`, `read`, `sched_setaffinity`, `socket`, `wait`, and
+`write`. The source tree also contains the corresponding C tests under
+`testcases/kernel/syscalls/`.
+
+The official runner in this checkout is no longer `runltp`: invoking it exits
+with the message that `runltp` was removed and that `kirk` should be used.
+The official source build was attempted with the documented `make autotools`
+entry point. On the Windows MSYS environment it stops before configuration
+because `aclocal` is not installed. The first attempt also showed that the
+native MSYS PATH does not provide the Unix `dirname`/`sed` tool set expected by
+the make rules; with `/usr/bin:/bin` restored, the deterministic blocker is:
+
+```text
+make: aclocal: No such file or directory
+make: *** .../include/mk/automake.mk:31: aclocal.m4] Error 127
+```
+
+WSL2 has `Ubuntu` and `docker-desktop` registrations, but both are stopped;
+starting the Ubuntu instance currently fails with
+`HCS_SERVICE_NOT_AVAILABLE`. No Windows feature, distribution, or Docker
+daemon was changed during this audit. Once a Linux environment is available,
+the upstream path is:
+
+```sh
+make autotools
+./configure --prefix="$HOME/ltp-install"
+make all
+```
+
+The official LTP result must remain separate from the uCore runner results:
+the upstream binaries require Linux headers, glibc, a Linux ELF loader,
+`/proc`/`/sys`, signals, users/groups, and many privileged kernel interfaces.
+The passing table above therefore records uCore-adapted tests, while this
+section records the upstream source/build audit and its environment blockers.
