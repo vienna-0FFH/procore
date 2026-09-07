@@ -45,6 +45,18 @@ The current initial subset maps these LTP themes:
 | `schedtest` | scheduler/load balance | runnable migration and accounting |
 | `cowtest` | memory management | fork COW and reclaim |
 
+The latest complete uCore run used the configured four-vCPU QEMU topology
+(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All ten
+configured programs built successfully, reached their result marker, and
+returned status 0:
+
+| uCore runner result | Tests |
+| --- | --- |
+| `PASS` (10/10) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest` |
+
+The machine-readable record is `target/native/ltp/summary.csv`; serial logs are
+kept beside it. These are uCore/QEMU results, not upstream Linux LTP results.
+
 Upstream cases that depend on Linux-only facilities such as `/proc`, signals,
 ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
 `NOT_IMPL` until uCore grows the corresponding subsystem. They should not be
