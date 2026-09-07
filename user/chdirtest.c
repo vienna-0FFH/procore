@@ -9,7 +9,6 @@
 int
 main(void) {
     char cwd[FS_MAX_FPATH_LEN + 1];
-    char first, second;
     int fd, dupfd;
 
     assert(getcwd(cwd, sizeof(cwd)) == 0);
@@ -21,9 +20,11 @@ main(void) {
     assert(fd >= 0);
     dupfd = dup(fd);
     assert(dupfd >= 0 && dupfd != fd);
-    assert(read(fd, &first, sizeof(first)) == sizeof(first));
-    assert(read(dupfd, &second, sizeof(second)) == sizeof(second));
-    assert(first == second);
+    assert(seek(fd, 0, LSEEK_SET) == 0);
+    assert(read(fd, cwd, 1) == 1);
+    assert(seek(dupfd, 0, LSEEK_CUR) == 1);
+    assert(read(dupfd, cwd, 1) == 1);
+    assert(seek(fd, 0, LSEEK_CUR) == 2);
     assert(close(dupfd) == 0);
     assert(close(fd) == 0);
 

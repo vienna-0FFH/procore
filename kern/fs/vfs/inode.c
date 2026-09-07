@@ -49,8 +49,7 @@ inode_kill(struct inode *node) {
  * */
 int
 inode_ref_inc(struct inode *node) {
-    node->ref_count += 1;
-    return node->ref_count;
+    return atomic_inc_return(&node->ref_count);
 }
 
 /* *
@@ -60,10 +59,9 @@ inode_ref_inc(struct inode *node) {
  * */
 int
 inode_ref_dec(struct inode *node) {
-    assert(inode_ref_count(node) > 0);
     int ref_count, ret;
-    node->ref_count-= 1;
-    ref_count = node->ref_count;
+    ref_count = atomic_dec_return(&node->ref_count);
+    assert(ref_count >= 0);
     if (ref_count == 0) {
         if ((ret = vop_reclaim(node)) != 0 && ret != -E_BUSY) {
             cprintf("vfs: warning: vop_reclaim: %e.\n", ret);
@@ -78,8 +76,7 @@ inode_ref_dec(struct inode *node) {
  * */
 int
 inode_open_inc(struct inode *node) {
-    node->open_count += 1;
-    return node->open_count;
+    return atomic_inc_return(&node->open_count);
 }
 
 /* *
@@ -89,10 +86,9 @@ inode_open_inc(struct inode *node) {
  * */
 int
 inode_open_dec(struct inode *node) {
-    assert(inode_open_count(node) > 0);
     int open_count, ret;
-    node->open_count -= 1;
-    open_count = node->open_count;
+    open_count = atomic_dec_return(&node->open_count);
+    assert(open_count >= 0);
     if (open_count == 0) {
         if ((ret = vop_close(node)) != 0) {
             cprintf("vfs: warning: vop_close: %e.\n", ret);
@@ -113,4 +109,3 @@ inode_check(struct inode *node, const char *opstr) {
     assert(ref_count >= open_count && open_count >= 0);
     assert(ref_count < MAX_INODE_COUNT && open_count < MAX_INODE_COUNT);
 }
-

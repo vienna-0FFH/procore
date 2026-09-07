@@ -38,7 +38,7 @@ void unlock_files(struct files_struct *filesp);
 struct files_struct *files_create(void);
 void files_destroy(struct files_struct *filesp);
 void files_closeall(struct files_struct *filesp);
-int dup_files(struct files_struct *to, struct files_struct *from);
+int dup_fs(struct files_struct *to, struct files_struct *from);
 
 static inline int
 files_count(struct files_struct *filesp) {

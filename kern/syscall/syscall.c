@@ -15,6 +15,7 @@
 #include <smp.h>
 #include <net.h>
 #include <file.h>
+#include <kmalloc.h>
 
 static int
 sys_exit(uint32_t arg[]) {

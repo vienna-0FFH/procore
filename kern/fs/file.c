@@ -10,143 +10,197 @@
 #include <dirent.h>
 #include <error.h>
 #include <assert.h>
+#include <atomic.h>
+#include <sem.h>
 #include <net.h>
+#include <kmalloc.h>
 
-#define testfd(fd)                          ((fd) >= 0 && (fd) < FILES_STRUCT_NENTRY)
+#define testfd(fd)              ((fd) >= 0 && (fd) < FILES_STRUCT_NENTRY)
 
-// get_fd_array - get current process's open files table
-static struct file *
-get_fd_array(void) {
+enum open_file_kind {
+    OPEN_FILE_INODE,
+    OPEN_FILE_SOCKET,
+};
+
+/*
+ * One open-file description may be referenced by several descriptors and by
+ * in-flight operations. descriptor_count controls socket close notification;
+ * ref_count controls allocation and inode/socket lifetime.
+ */
+struct open_file {
+    volatile int ref_count;
+    volatile int descriptor_count;
+    enum open_file_kind kind;
+    bool readable;
+    bool writable;
+    bool append;
+    off_t pos;
+    union {
+        struct inode *node;
+        struct net_socket *socket;
+    } object;
+    semaphore_t operation_sem;
+};
+
+void open_file_put(struct open_file *description);
+
+static struct files_struct *
+current_files(void) {
     struct files_struct *filesp = current->filesp;
     assert(filesp != NULL && files_count(filesp) > 0);
-    return filesp->fd_array;
+    return filesp;
 }
 
-// fd_array_init - initialize the open files table
-void
-fd_array_init(struct file *fd_array) {
-    int fd;
-    struct file *file = fd_array;
-    for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++, file ++) {
-        file->open_count = 0;
-        file->status = FD_NONE, file->fd = fd;
-        file->pos = 0;
-        file->object.node = NULL;
+static struct open_file *
+open_file_create(enum open_file_kind kind, bool readable, bool writable,
+                 bool append, off_t pos, void *object) {
+    struct open_file *description = kmalloc(sizeof(*description));
+    if (description == NULL) {
+        return NULL;
+    }
+    description->ref_count = 1;
+    description->descriptor_count = 1;
+    description->kind = kind;
+    description->readable = readable;
+    description->writable = writable;
+    description->append = append;
+    description->pos = pos;
+    description->object.node = object;
+    sem_init(&description->operation_sem, 1);
+    return description;
+}
+
+static void
+open_file_get(struct open_file *description) {
+    assert(description != NULL && description->ref_count > 0);
+    assert(atomic_inc_return(&description->ref_count) > 1);
+}
+
+static void
+open_file_get_descriptor(struct open_file *description) {
+    open_file_get(description);
+    assert(description->descriptor_count > 0);
+    assert(atomic_inc_return(&description->descriptor_count) > 1);
+}
+
+static void
+open_file_drop_descriptor(struct open_file *description) {
+    int descriptors;
+    assert(description != NULL && description->descriptor_count > 0);
+    descriptors = atomic_dec_return(&description->descriptor_count);
+    assert(descriptors >= 0);
+    if (descriptors == 0 && description->kind == OPEN_FILE_SOCKET) {
+        net_socket_close_descriptor(description->object.socket);
     }
 }
 
-// fs_array_alloc - allocate a free file item (with FD_NONE status) in open files table
+void
+open_file_put(struct open_file *description) {
+    int references;
+    if (description == NULL) {
+        return;
+    }
+    references = atomic_dec_return(&description->ref_count);
+    assert(references >= 0);
+    if (references != 0) {
+        return;
+    }
+    assert(description->descriptor_count == 0);
+    if (description->kind == OPEN_FILE_SOCKET) {
+        net_socket_put(description->object.socket);
+    }
+    else {
+        vfs_close(description->object.node);
+    }
+    kfree(description);
+}
+
+void
+fd_array_init(struct file *fd_array) {
+    int fd;
+    for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++) {
+        fd_array[fd].status = FD_NONE;
+        fd_array[fd].fd = fd;
+        fd_array[fd].description = NULL;
+    }
+}
+
+/* Caller holds files_sem. */
 static int
-fd_array_alloc(int fd, struct file **file_store) {
-//    panic("debug");
-    struct file *file = get_fd_array();
-    if (fd == NO_FD) {
-        for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++, file ++) {
-            if (file->status == FD_NONE) {
+fd_array_alloc(struct files_struct *filesp, int requested,
+               struct file **file_store) {
+    int fd;
+    if (requested == NO_FD) {
+        for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++) {
+            if (filesp->fd_array[fd].status == FD_NONE) {
                 goto found;
             }
         }
         return -E_MAX_OPEN;
     }
-    else {
-        if (testfd(fd)) {
-            file += fd;
-            if (file->status == FD_NONE) {
-                goto found;
-            }
-            return -E_BUSY;
-        }
+    if (!testfd(requested)) {
         return -E_INVAL;
     }
+    fd = requested;
+    if (filesp->fd_array[fd].status != FD_NONE) {
+        return -E_BUSY;
+    }
+
 found:
-    assert(fopen_count(file) == 0);
-    file->status = FD_INIT, file->object.node = NULL;
-    *file_store = file;
+    filesp->fd_array[fd].status = FD_INIT;
+    filesp->fd_array[fd].description = NULL;
+    *file_store = &filesp->fd_array[fd];
     return 0;
 }
 
-// fd_array_free - free a file item in open files table
+/* Caller holds files_sem. */
 static void
-fd_array_free(struct file *file) {
-    assert(file->status == FD_INIT || file->status == FD_CLOSED);
-    assert(fopen_count(file) == 0);
-    if (file->status == FD_CLOSED) {
-        if (file_is_socket(file)) {
-            net_socket_put(file_socket(file));
-        }
-        else {
-            vfs_close(file_node(file));
-        }
-    }
-    file->object.node = NULL;
+fd_array_cancel(struct file *file) {
+    assert(file->status == FD_INIT && file->description == NULL);
     file->status = FD_NONE;
 }
 
+/* Caller holds files_sem and transfers one descriptor reference to the slot. */
 static void
-fd_array_acquire(struct file *file) {
-    assert(file->status == FD_OPENED);
-    fopen_count_inc(file);
-}
-
-// fd_array_release - file's open_count--; if file's open_count-- == 0 , then call fd_array_free to free this file item
-static void
-fd_array_release(struct file *file) {
-    assert(file->status == FD_OPENED || file->status == FD_CLOSED);
-    assert(fopen_count(file) > 0);
-    if (fopen_count_dec(file) == 0) {
-        fd_array_free(file);
-    }
-}
-
-// fd_array_open - file's open_count++, set status to FD_OPENED
-void
-fd_array_open(struct file *file) {
-    assert(file->status == FD_INIT &&
-           (file_node(file) != NULL || file_is_socket(file)));
+fd_array_install(struct file *file, struct open_file *description) {
+    assert(file->status == FD_INIT && file->description == NULL);
+    assert(description != NULL && description->descriptor_count > 0);
+    file->description = description;
     file->status = FD_OPENED;
-    fopen_count_inc(file);
 }
 
-// fd_array_close - file's open_count--; if file's open_count-- == 0 , then call fd_array_free to free this file item
-void
+/* Caller holds files_sem. The returned reference must be put after unlock. */
+struct open_file *
 fd_array_close(struct file *file) {
-    assert(file->status == FD_OPENED);
-    assert(fopen_count(file) > 0);
-    if (file_is_socket(file)) {
-        net_socket_close_descriptor(file_socket(file));
-    }
-    file->status = FD_CLOSED;
-    if (fopen_count_dec(file) == 0) {
-        fd_array_free(file);
-    }
+    struct open_file *description;
+    assert(file->status == FD_OPENED && file->description != NULL);
+    description = file->description;
+    file->description = NULL;
+    file->status = FD_NONE;
+    open_file_drop_descriptor(description);
+    return description;
 }
 
-//fs_array_dup - duplicate file 'from'  to file 'to'
+/* Caller holds the source table lock; TO must not be externally visible. */
 void
-fd_array_dup(struct file *to, struct file *from) {
-    //cprintf("[fd_array_dup]from fd=%d, to fd=%d\n",from->fd, to->fd);
-    assert(to->status == FD_INIT && from->status == FD_OPENED);
-    to->pos = from->pos;
-    to->readable = from->readable;
-    to->writable = from->writable;
-    if (file_is_socket(from)) {
-        file_socket(to) = file_socket(from);
-        net_socket_get_descriptor(file_socket(to));
-    }
-    else {
-        struct inode *node = file_node(from);
-        vop_ref_inc(node), vop_open_inc(node);
-        file_node(to) = node;
-    }
-    fd_array_open(to);
+fd_array_dup(struct file *to, const struct file *from) {
+    struct open_file *description;
+    assert(to != from && (to->status == FD_NONE || to->status == FD_INIT));
+    assert(from->status == FD_OPENED && from->description != NULL);
+    description = from->description;
+    open_file_get_descriptor(description);
+    to->description = description;
+    to->status = FD_OPENED;
 }
 
-// fd2file - use fd as index of fd_array, return the array item (file)
-static inline int
-fd2file(int fd, struct file **file_store) {
+/* Caller holds files_sem. */
+static int
+fd2file_locked(struct files_struct *filesp, int fd,
+               struct file **file_store) {
     if (testfd(fd)) {
-        struct file *file = get_fd_array() + fd;
-        if (file->status == FD_OPENED && file->fd == fd) {
+        struct file *file = &filesp->fd_array[fd];
+        if (file->status == FD_OPENED && file->fd == fd &&
+            file->description != NULL) {
             *file_store = file;
             return 0;
         }
@@ -154,288 +208,383 @@ fd2file(int fd, struct file **file_store) {
     return -E_INVAL;
 }
 
-// file_testfd - test file is readble or writable?
-bool
-file_testfd(int fd, bool readable, bool writable) {
-    int ret;
+static int
+fd_acquire(int fd, struct open_file **description_store) {
+    struct files_struct *filesp = current_files();
     struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
-        return 0;
+    int ret;
+
+    lock_files(filesp);
+    ret = fd2file_locked(filesp, fd, &file);
+    if (ret == 0) {
+        open_file_get(file->description);
+        *description_store = file->description;
     }
-    if (readable && !file->readable) {
-        return 0;
-    }
-    if (writable && !file->writable) {
-        return 0;
-    }
-    return 1;
+    unlock_files(filesp);
+    return ret;
 }
 
-// open file
+bool
+file_testfd(int fd, bool readable, bool writable) {
+    struct files_struct *filesp = current_files();
+    struct file *file;
+    bool valid = 0;
+
+    lock_files(filesp);
+    if (fd2file_locked(filesp, fd, &file) == 0) {
+        struct open_file *description = file->description;
+        valid = (!readable || description->readable) &&
+                (!writable || description->writable);
+    }
+    unlock_files(filesp);
+    return valid;
+}
+
 int
 file_open(char *path, uint32_t open_flags) {
+    struct files_struct *filesp = current_files();
+    struct open_file *description;
+    struct file *file;
+    struct inode *node;
     bool readable = 0, writable = 0;
+    bool append = (open_flags & O_APPEND) != 0;
+    off_t pos = 0;
+    int ret;
+
     switch (open_flags & O_ACCMODE) {
     case O_RDONLY: readable = 1; break;
     case O_WRONLY: writable = 1; break;
-    case O_RDWR:
-        readable = writable = 1;
-        break;
-    default:
-        return -E_INVAL;
+    case O_RDWR: readable = writable = 1; break;
+    default: return -E_INVAL;
     }
 
-    int ret;
-    struct file *file;
-    if ((ret = fd_array_alloc(NO_FD, &file)) != 0) {
+    /* Reserve a descriptor before pathname creation so EMFILE cannot leave
+     * behind an O_CREAT inode. FD_INIT is invisible to normal lookups and is
+     * cancelled on every failure path below. */
+    lock_files(filesp);
+    ret = fd_array_alloc(filesp, NO_FD, &file);
+    unlock_files(filesp);
+    if (ret != 0) {
         return ret;
     }
 
-    struct inode *node;
     if ((ret = vfs_open(path, open_flags, &node)) != 0) {
-        fd_array_free(file);
-        return ret;
+        goto failed_slot;
     }
-
-    file->pos = 0;
-    if (open_flags & O_APPEND) {
-        struct stat __stat, *stat = &__stat;
-        if ((ret = vop_fstat(node, stat)) != 0) {
+    if (append) {
+        struct stat stat;
+        if ((ret = vop_fstat(node, &stat)) != 0) {
             vfs_close(node);
-            fd_array_free(file);
-            return ret;
+            goto failed_slot;
         }
-        file->pos = stat->st_size;
+        pos = stat.st_size;
+    }
+    description = open_file_create(OPEN_FILE_INODE, readable, writable,
+                                   append, pos, node);
+    if (description == NULL) {
+        vfs_close(node);
+        ret = -E_NO_MEM;
+        goto failed_slot;
     }
 
-    file_node(file) = node;
-    file->readable = readable;
-    file->writable = writable;
-    fd_array_open(file);
+    lock_files(filesp);
+    fd_array_install(file, description);
+    unlock_files(filesp);
     return file->fd;
+
+failed_slot:
+    lock_files(filesp);
+    fd_array_cancel(file);
+    unlock_files(filesp);
+    return ret;
 }
 
-// close file
 int
 file_close(int fd) {
-    int ret;
+    struct files_struct *filesp = current_files();
+    struct open_file *description = NULL;
     struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    int ret;
+
+    lock_files(filesp);
+    if ((ret = fd2file_locked(filesp, fd, &file)) == 0) {
+        description = fd_array_close(file);
+    }
+    unlock_files(filesp);
+    if (ret != 0) {
         return ret;
     }
-    fd_array_close(file);
+    open_file_put(description);
     return 0;
 }
 
-// read file
+static int
+regular_file_acquire(int fd, bool readable, bool writable,
+                     struct open_file **description_store) {
+    struct open_file *description;
+    int ret = fd_acquire(fd, &description);
+    if (ret != 0) {
+        return ret;
+    }
+    if (description->kind != OPEN_FILE_INODE ||
+        (readable && !description->readable) ||
+        (writable && !description->writable)) {
+        open_file_put(description);
+        return -E_INVAL;
+    }
+    *description_store = description;
+    return 0;
+}
+
 int
 file_read(int fd, void *base, size_t len, size_t *copied_store) {
+    struct open_file *description;
+    struct iobuf iob;
+    size_t copied;
     int ret;
-    struct file *file;
+
     *copied_store = 0;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    if ((ret = regular_file_acquire(fd, 1, 0, &description)) != 0) {
         return ret;
     }
-    if (!file->readable) {
-        return -E_INVAL;
-    }
-    if (file_is_socket(file)) {
-        return -E_INVAL;
-    }
-    fd_array_acquire(file);
-
-    struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
-    ret = vop_read(file_node(file), iob);
-
-    size_t copied = iobuf_used(iob);
-    if (file->status == FD_OPENED) {
-        file->pos += copied;
-    }
+    down(&description->operation_sem);
+    iobuf_init(&iob, base, len, description->pos);
+    ret = vop_read(description->object.node, &iob);
+    copied = iobuf_used(&iob);
+    description->pos += copied;
+    up(&description->operation_sem);
     *copied_store = copied;
-    fd_array_release(file);
+    open_file_put(description);
     return ret;
 }
 
-// write file
 int
 file_write(int fd, void *base, size_t len, size_t *copied_store) {
+    struct open_file *description;
+    struct iobuf iob;
+    size_t copied;
     int ret;
-    struct file *file;
+
     *copied_store = 0;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    if ((ret = regular_file_acquire(fd, 0, 1, &description)) != 0) {
         return ret;
     }
-    if (!file->writable) {
-        return -E_INVAL;
+    down(&description->operation_sem);
+    if (description->append) {
+        struct stat stat;
+        ret = vop_fstat(description->object.node, &stat);
+        if (ret != 0) {
+            up(&description->operation_sem);
+            open_file_put(description);
+            return ret;
+        }
+        description->pos = stat.st_size;
     }
-    if (file_is_socket(file)) {
-        return -E_INVAL;
-    }
-    fd_array_acquire(file);
-
-    struct iobuf __iob, *iob = iobuf_init(&__iob, base, len, file->pos);
-    ret = vop_write(file_node(file), iob);
-
-    size_t copied = iobuf_used(iob);
-    if (file->status == FD_OPENED) {
-        file->pos += copied;
-    }
+    iobuf_init(&iob, base, len, description->pos);
+    ret = vop_write(description->object.node, &iob);
+    copied = iobuf_used(&iob);
+    description->pos += copied;
+    up(&description->operation_sem);
     *copied_store = copied;
-    fd_array_release(file);
+    open_file_put(description);
     return ret;
 }
 
-// seek file
 int
 file_seek(int fd, off_t pos, int whence) {
-    struct stat __stat, *stat = &__stat;
-    int ret;
-    struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    struct open_file *description;
+    int ret = fd_acquire(fd, &description);
+    if (ret != 0) {
         return ret;
     }
-    if (file_is_socket(file)) {
+    if (description->kind != OPEN_FILE_INODE) {
+        open_file_put(description);
         return -E_SEEK;
     }
-    fd_array_acquire(file);
 
+    down(&description->operation_sem);
     switch (whence) {
-    case LSEEK_SET: break;
-    case LSEEK_CUR: pos += file->pos; break;
-    case LSEEK_END:
-        if ((ret = vop_fstat(file_node(file), stat)) == 0) {
-            pos += stat->st_size;
+    case LSEEK_SET:
+        break;
+    case LSEEK_CUR:
+        pos += description->pos;
+        break;
+    case LSEEK_END: {
+        struct stat stat;
+        if ((ret = vop_fstat(description->object.node, &stat)) == 0) {
+            pos += stat.st_size;
         }
         break;
-    default: ret = -E_INVAL;
     }
-
-    if (ret == 0) {
-        if ((ret = vop_tryseek(file_node(file), pos)) == 0) {
-            file->pos = pos;
-        }
-//    cprintf("file_seek, pos=%d, whence=%d, ret=%d\n", pos, whence, ret);
+    default:
+        ret = -E_INVAL;
     }
-    fd_array_release(file);
+    if (ret == 0 &&
+        (ret = vop_tryseek(description->object.node, pos)) == 0) {
+        description->pos = pos;
+        ret = pos;
+    }
+    up(&description->operation_sem);
+    open_file_put(description);
     return ret;
 }
 
-// stat file
 int
 file_fstat(int fd, struct stat *stat) {
+    struct open_file *description;
     int ret;
-    struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    if ((ret = regular_file_acquire(fd, 0, 0, &description)) != 0) {
         return ret;
     }
-    if (file_is_socket(file)) {
-        return -E_INVAL;
-    }
-    fd_array_acquire(file);
-    ret = vop_fstat(file_node(file), stat);
-    fd_array_release(file);
+    down(&description->operation_sem);
+    ret = vop_fstat(description->object.node, stat);
+    up(&description->operation_sem);
+    open_file_put(description);
     return ret;
 }
 
-// sync file
 int
 file_fsync(int fd) {
+    struct open_file *description;
     int ret;
-    struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    if ((ret = regular_file_acquire(fd, 0, 0, &description)) != 0) {
         return ret;
     }
-    if (file_is_socket(file)) {
-        return -E_INVAL;
-    }
-    fd_array_acquire(file);
-    ret = vop_fsync(file_node(file));
-    fd_array_release(file);
+    down(&description->operation_sem);
+    ret = vop_fsync(description->object.node);
+    up(&description->operation_sem);
+    open_file_put(description);
     return ret;
 }
 
-// get file entry in DIR
 int
 file_getdirentry(int fd, struct dirent *direntp) {
+    struct open_file *description;
+    struct iobuf iob;
     int ret;
-    struct file *file;
-    if ((ret = fd2file(fd, &file)) != 0) {
+    if ((ret = regular_file_acquire(fd, 0, 0, &description)) != 0) {
         return ret;
     }
-    if (file_is_socket(file)) {
-        return -E_NOTDIR;
+    down(&description->operation_sem);
+    iobuf_init(&iob, direntp->name, sizeof(direntp->name), direntp->offset);
+    if ((ret = vop_getdirentry(description->object.node, &iob)) == 0) {
+        direntp->offset += iobuf_used(&iob);
     }
-    fd_array_acquire(file);
-
-    struct iobuf __iob, *iob = iobuf_init(&__iob, direntp->name, sizeof(direntp->name), direntp->offset);
-    if ((ret = vop_getdirentry(file_node(file), iob)) == 0) {
-        direntp->offset += iobuf_used(iob);
-    }
-    fd_array_release(file);
+    up(&description->operation_sem);
+    open_file_put(description);
     return ret;
 }
 
-// duplicate file
 int
 file_dup(int fd1, int fd2) {
+    struct files_struct *filesp = current_files();
+    struct open_file *replaced = NULL;
+    struct file *from, *to;
     int ret;
-    struct file *file1, *file2;
-    if ((ret = fd2file(fd1, &file1)) != 0) {
-        return ret;
+
+    lock_files(filesp);
+    if ((ret = fd2file_locked(filesp, fd1, &from)) != 0) {
+        goto out_unlock;
     }
-    if ((ret = fd_array_alloc(fd2, &file2)) != 0) {
-        return ret;
+    if (fd1 == fd2) {
+        ret = fd1;
+        goto out_unlock;
     }
-    fd_array_dup(file2, file1);
-    return file2->fd;
+    if (fd2 == NO_FD) {
+        if ((ret = fd_array_alloc(filesp, NO_FD, &to)) != 0) {
+            goto out_unlock;
+        }
+    }
+    else {
+        if (!testfd(fd2)) {
+            ret = -E_INVAL;
+            goto out_unlock;
+        }
+        to = &filesp->fd_array[fd2];
+        if (to->status == FD_INIT) {
+            ret = -E_BUSY;
+            goto out_unlock;
+        }
+        if (to->status == FD_OPENED) {
+            replaced = fd_array_close(to);
+        }
+    }
+    fd_array_dup(to, from);
+    ret = to->fd;
+
+out_unlock:
+    unlock_files(filesp);
+    open_file_put(replaced);
+    return ret;
 }
 
 int
 file_socket_create(int domain, int type, int protocol) {
-    struct file *file;
+    struct files_struct *filesp = current_files();
+    struct open_file *description;
     struct net_socket *socket;
+    struct file *file;
     int ret;
 
     if (domain != AF_INET || type != SOCK_DGRAM ||
         (protocol != 0 && protocol != IPPROTO_UDP)) {
         return -E_INVAL;
     }
-    if ((ret = fd_array_alloc(NO_FD, &file)) != 0) {
-        return ret;
-    }
-    socket = net_socket_create(domain, type, protocol);
-    if (socket == NULL) {
-        fd_array_free(file);
-        return -E_NO_MEM;
-    }
-    file->readable = 1;
-    file->writable = 1;
-    file->pos = FILE_SOCKET_POS;
-    file_socket(file) = socket;
-    fd_array_open(file);
-    return file->fd;
-}
 
-static int
-file_socket_get(int fd, struct file **file_store) {
-    int ret = fd2file(fd, file_store);
+    lock_files(filesp);
+    ret = fd_array_alloc(filesp, NO_FD, &file);
+    unlock_files(filesp);
     if (ret != 0) {
         return ret;
     }
-    if (!file_is_socket(*file_store) || file_socket(*file_store) == NULL) {
+
+    socket = net_socket_create(domain, type, protocol);
+    if (socket == NULL) {
+        ret = -E_NO_MEM;
+        goto failed_socket_slot;
+    }
+    description = open_file_create(OPEN_FILE_SOCKET, 1, 1, 0, 0, socket);
+    if (description == NULL) {
+        net_socket_close_descriptor(socket);
+        net_socket_put(socket);
+        ret = -E_NO_MEM;
+        goto failed_socket_slot;
+    }
+    lock_files(filesp);
+    fd_array_install(file, description);
+    unlock_files(filesp);
+    return file->fd;
+
+failed_socket_slot:
+    lock_files(filesp);
+    fd_array_cancel(file);
+    unlock_files(filesp);
+    return ret;
+}
+
+static int
+socket_file_acquire(int fd, struct open_file **description_store) {
+    struct open_file *description;
+    int ret = fd_acquire(fd, &description);
+    if (ret != 0) {
+        return ret;
+    }
+    if (description->kind != OPEN_FILE_SOCKET ||
+        description->object.socket == NULL) {
+        open_file_put(description);
         return -E_INVAL;
     }
+    *description_store = description;
     return 0;
 }
 
 int
 file_socket_bind(int fd, const struct sockaddr_in *address, size_t length) {
-    struct file *file;
-    int ret = file_socket_get(fd, &file);
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
     if (ret == 0) {
-        fd_array_acquire(file);
-        ret = net_socket_bind(file_socket(file), address, length);
-        fd_array_release(file);
+        ret = net_socket_bind(description->object.socket, address, length);
+        open_file_put(description);
     }
     return ret;
 }
@@ -443,13 +592,12 @@ file_socket_bind(int fd, const struct sockaddr_in *address, size_t length) {
 int
 file_socket_sendto(int fd, const void *data, size_t length,
                    const struct sockaddr_in *destination, size_t dest_length) {
-    struct file *file;
-    int ret = file_socket_get(fd, &file);
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
     if (ret == 0) {
-        fd_array_acquire(file);
-        ret = net_socket_sendto(file_socket(file), data, length,
+        ret = net_socket_sendto(description->object.socket, data, length,
                                 destination, dest_length);
-        fd_array_release(file);
+        open_file_put(description);
     }
     return ret;
 }
@@ -457,13 +605,12 @@ file_socket_sendto(int fd, const void *data, size_t length,
 int
 file_socket_recvfrom(int fd, void *data, size_t length,
                      struct sockaddr_in *source, size_t *source_length) {
-    struct file *file;
-    int ret = file_socket_get(fd, &file);
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
     if (ret == 0) {
-        fd_array_acquire(file);
-        ret = net_socket_recvfrom(file_socket(file), data, length,
+        ret = net_socket_recvfrom(description->object.socket, data, length,
                                   source, source_length);
-        fd_array_release(file);
+        open_file_put(description);
     }
     return ret;
 }

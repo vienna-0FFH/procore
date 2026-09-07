@@ -1375,7 +1375,11 @@ sfs_reclaim(struct inode *node) {
     uint32_t ent;
     lock_sfs_fs(sfs);
     assert(sin->reclaim_count > 0);
-    if ((-- sin->reclaim_count) != 0 || inode_ref_count(node) != 0) {
+    /* A lookup may race the final reference drop.  Do not consume the
+     * reclaim token until the filesystem lock confirms that the inode is still
+     * unreferenced; otherwise a 0->1->0 cycle would leave reclaim_count at
+     * zero and make the next legitimate reclaim trip the assertion above. */
+    if (inode_ref_count(node) != 0 || (-- sin->reclaim_count) != 0) {
         goto failed_unlock;
     }
     if (sin->din->nlinks == 0) {

@@ -35,8 +35,8 @@ struct inode {
         inode_type_device_info = 0x1234,
         inode_type_sfs_inode_info,
     } in_type;
-    int ref_count;
-    int open_count;
+    volatile int ref_count;
+    volatile int open_count;
     struct fs *in_fs;
     const struct inode_ops *in_ops;
 };
@@ -245,4 +245,3 @@ inode_open_count(struct inode *node) {
 }
 
 #endif /* !__KERN_FS_VFS_INODE_H__ */
-

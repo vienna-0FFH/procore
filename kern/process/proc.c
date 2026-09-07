@@ -685,8 +685,11 @@ do_exit(int error_code) {
 static int
 load_icode_read(int fd, void *buf, size_t len, off_t offset) {
     int ret;
-    if ((ret = sysfile_seek(fd, offset, LSEEK_SET)) != 0) {
+    if ((ret = sysfile_seek(fd, offset, LSEEK_SET)) < 0) {
         return ret;
+    }
+    if (ret != offset) {
+        return -E_SEEK;
     }
     if ((ret = sysfile_read(fd, buf, len)) != len) {
         return (ret < 0) ? ret : -1;
@@ -1006,7 +1009,9 @@ do_wait(int pid, int *code_store) {
     bool intr_flag;
     bool haskid;
 
-    if (code_store != NULL) {
+    /* Kernel callers (init_main and internal reapers) pass a kernel stack
+     * address; only user callers need an address-space validation. */
+    if (code_store != NULL && mm != NULL) {
         if (!user_mem_check(mm, (uintptr_t)code_store, sizeof(int), 1)) {
             return -E_INVAL;
         }
@@ -1250,6 +1255,15 @@ init_main(void *arg) {
     if (pid <= 0) {
         panic("create user_main failed.\n");
     }
+#ifdef TEST
+    /* A configured user test runs before the noisy kernel synchronization
+     * self-test. This gives the host runner one unambiguous result line. */
+    int test_status;
+    if ((ret = do_wait(pid, &test_status)) != 0) {
+        panic("wait user test failed: %e.\n", ret);
+    }
+    cprintf("user-test-result: status=%d.\n", test_status);
+#endif
     extern void check_sync(void);
     check_sync();                // check philosopher sync problem
 

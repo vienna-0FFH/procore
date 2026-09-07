@@ -19,3 +19,4 @@ target/native/*.txt
 target/native/*.bin
 target/native/*.err
 target/native/reference-kernel.elf
+target/native/ltp/

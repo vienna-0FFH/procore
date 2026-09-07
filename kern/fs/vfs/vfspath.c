@@ -44,11 +44,14 @@ unlock_cfs(void) {
 int
 vfs_get_curdir(struct inode **dir_store) {
     struct inode *node;
+    lock_cfs();
     if ((node = get_cwd_nolock()) != NULL) {
         vop_ref_inc(node);
         *dir_store = node;
+        unlock_cfs();
         return 0;
     }
+    unlock_cfs();
     return -E_NOENT;
 }
 
@@ -123,4 +126,3 @@ out:
     vop_ref_dec(node);
     return ret;
 }
-

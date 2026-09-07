@@ -7,14 +7,13 @@
 #include <sfs.h>
 #include <inode.h>
 #include <assert.h>
-//called when init_main proc start
+
 void
 fs_init(void) {
     vfs_init();
     dev_init();
     sfs_init();
 }
-
 
 void
 fs_cleanup(void) {
@@ -23,77 +22,106 @@ fs_cleanup(void) {
 
 void
 lock_files(struct files_struct *filesp) {
-    down(&(filesp->files_sem));
+    down(&filesp->files_sem);
 }
 
 void
 unlock_files(struct files_struct *filesp) {
-    up(&(filesp->files_sem));
+    up(&filesp->files_sem);
 }
-//Called when a new proc init
+
 struct files_struct *
 files_create(void) {
-    //cprintf("[files_create]\n");
-    static_assert((int)FILES_STRUCT_NENTRY > 128);
     struct files_struct *filesp;
-    if ((filesp = kmalloc(sizeof(struct files_struct) + FILES_STRUCT_BUFSIZE)) != NULL) {
+    static_assert((int)FILES_STRUCT_NENTRY > 128);
+
+    filesp = kmalloc(sizeof(*filesp) + FILES_STRUCT_BUFSIZE);
+    if (filesp != NULL) {
         filesp->pwd = NULL;
         filesp->fd_array = (void *)(filesp + 1);
         filesp->files_count = 0;
-        sem_init(&(filesp->files_sem), 1);
+        sem_init(&filesp->files_sem, 1);
         fd_array_init(filesp->fd_array);
     }
     return filesp;
 }
-//Called when a proc exit
+
+static int
+files_detach(struct files_struct *filesp, int first,
+             struct open_file **descriptions) {
+    struct file *file;
+    int fd, count = 0;
+
+    lock_files(filesp);
+    for (fd = first; fd < FILES_STRUCT_NENTRY; fd ++) {
+        file = &filesp->fd_array[fd];
+        if (file->status == FD_OPENED) {
+            descriptions[count++] = fd_array_close(file);
+        }
+    }
+    unlock_files(filesp);
+    return count;
+}
+
+static void
+files_put_descriptions(struct open_file **descriptions, int count) {
+    int i;
+    for (i = 0; i < count; i ++) {
+        open_file_put(descriptions[i]);
+    }
+}
+
 void
 files_destroy(struct files_struct *filesp) {
-//    cprintf("[files_destroy]\n");
+    struct open_file *descriptions[FILES_STRUCT_NENTRY];
+    struct inode *pwd;
+    int count, fd;
+
     assert(filesp != NULL && files_count(filesp) == 0);
-    if (filesp->pwd != NULL) {
-        vop_ref_dec(filesp->pwd);
+    lock_files(filesp);
+    pwd = filesp->pwd;
+    filesp->pwd = NULL;
+    unlock_files(filesp);
+
+    count = files_detach(filesp, 0, descriptions);
+    for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++) {
+        assert(filesp->fd_array[fd].status == FD_NONE);
     }
-    int i;
-    struct file *file = filesp->fd_array;
-    for (i = 0; i < FILES_STRUCT_NENTRY; i ++, file ++) {
-        if (file->status == FD_OPENED) {
-            fd_array_close(file);
-        }
-        assert(file->status == FD_NONE);
+    files_put_descriptions(descriptions, count);
+    if (pwd != NULL) {
+        vop_ref_dec(pwd);
     }
     kfree(filesp);
 }
 
 void
 files_closeall(struct files_struct *filesp) {
-//    cprintf("[files_closeall]\n");
+    struct open_file *descriptions[FILES_STRUCT_NENTRY];
+    int count;
+
     assert(filesp != NULL && files_count(filesp) > 0);
-    int i;
-    struct file *file = filesp->fd_array;
-    //skip the stdin & stdout
-    for (i = 2, file += 2; i < FILES_STRUCT_NENTRY; i ++, file ++) {
-        if (file->status == FD_OPENED) {
-            fd_array_close(file);
-        }
-    }
+    /* Keep stdin/stdout across exec, matching the existing process ABI. */
+    count = files_detach(filesp, 2, descriptions);
+    files_put_descriptions(descriptions, count);
 }
 
 int
 dup_fs(struct files_struct *to, struct files_struct *from) {
-//    cprintf("[dup_fs]\n");
-    assert(to != NULL && from != NULL);
+    int fd;
+
+    assert(to != NULL && from != NULL && to != from);
     assert(files_count(to) == 0 && files_count(from) > 0);
+
+    /* The source lock gives fork one coherent descriptor/cwd snapshot. */
+    lock_files(from);
     if ((to->pwd = from->pwd) != NULL) {
         vop_ref_inc(to->pwd);
     }
-    int i;
-    struct file *to_file = to->fd_array, *from_file = from->fd_array;
-    for (i = 0; i < FILES_STRUCT_NENTRY; i ++, to_file ++, from_file ++) {
-        if (from_file->status == FD_OPENED) {
-            /* alloc_fd first */
-            to_file->status = FD_INIT;
-            fd_array_dup(to_file, from_file);
+    for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++) {
+        if (from->fd_array[fd].status == FD_OPENED) {
+            fd_array_dup(&to->fd_array[fd], &from->fd_array[fd]);
         }
     }
+    unlock_files(from);
     return 0;
 }

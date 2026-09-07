@@ -86,7 +86,11 @@ include tools/function.mk
 listf_cc = $(call listf,$(1),$(CTYPE))
 
 # for cc
-add_files_cc = $(call add_files,$(1),$(CC),$(CFLAGS) $(3),$(2),$(4))
+# User headers must precede the kernel include directories.  Both layers have
+# a file.h, and letting -Ikern/fs win silently turns user programs' open/read
+# declarations into kernel-only structure definitions.  Keep kernel ordering
+# unchanged while making the user ABI deterministic and warning-free.
+add_files_cc = $(call add_files,$(1),$(CC),$(if $(filter ulibs uprog,$(2)),$(3) $(CFLAGS),$(CFLAGS) $(3)),$(2),$(4))
 create_target_cc = $(call create_target,$(1),$(2),$(3),$(CC),$(CFLAGS))
 
 # for hostcc
