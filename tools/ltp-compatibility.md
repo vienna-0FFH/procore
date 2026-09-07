@@ -89,13 +89,27 @@ build:   E:\project_learning\ltp-linux-build
 install: E:\project_learning\ltp-linux-install
 ```
 
-The build produced the common libraries and 1,553 syscall test binaries (1,870
-executable test artifacts in total). A continuation of `testcases-all` was
-given a 15-minute wall-clock limit; it reached the container/network-namespace
-families and was terminated by that limit with no compiler error. This is a
-build-time bound, not a test failure. No Windows feature, distribution, or
-Docker daemon was changed during the audit. If the complete native Linux build
-is needed later, the upstream path is:
+The initial build on `/mnt/e` produced 1,553 syscall test binaries before a
+15-minute continuation limit reached the container/network-namespace
+families. It was terminated by that limit with no compiler error. This was a
+build-time bound, not a test failure. To remove the DrvFS I/O bottleneck, the
+same source was then copied to WSL's native filesystem and built from:
+
+```text
+source:  /home/vienna/ltp-linux-src-native
+build:   /home/vienna/ltp-linux-build-native
+install: /home/vienna/ltp-linux-install-native
+```
+
+That native build completed with `RC=0` and produced 1,539 syscall binaries
+(2,253 executable test artifacts in total); installation also completed with
+`RC=0`. The checkout does not contain the optional `tools/kirk/kirk-src`
+submodule, so installation intentionally contains the upstream `runltp`
+compatibility shim, which tells users to install Kirk. The representative tests
+below were run directly from the built binaries, so this missing runner
+submodule does not affect their results. No Windows feature, distribution, or
+Docker daemon was changed during the audit. If the build needs to be repeated,
+the upstream path is:
 
 ```sh
 make autotools
@@ -111,7 +125,8 @@ section records the upstream source/build audit and its environment blockers.
 
 ## Linux-host representative run
 
-The following binaries were run directly on WSL2 Ubuntu from the build tree,
+The following binaries were run directly on WSL2 Ubuntu from the native build
+tree (`/home/vienna/ltp-linux-build-native`),
 with `timeout --kill-after=5s 45s` around each process. They validate the
 upstream test harness and Linux behavior only; they are not uCore results.
 `TPASS` is the number of passing assertions printed by each test.
