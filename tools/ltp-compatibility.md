@@ -69,8 +69,8 @@ standard families relevant to this OS, including `brk`, `chdir`, `clone`,
 
 The official runner in this checkout is no longer `runltp`: invoking it exits
 with the message that `runltp` was removed and that `kirk` should be used.
-The official source build was attempted with the documented `make autotools`
-entry point. On the Windows MSYS environment it stops before configuration
+The official source build was first attempted with the documented
+`make autotools` entry point in Windows/MSYS. It stops before configuration
 because `aclocal` is not installed. The first attempt also showed that the
 native MSYS PATH does not provide the Unix `dirname`/`sed` tool set expected by
 the make rules; with `/usr/bin:/bin` restored, the deterministic blocker is:
@@ -80,11 +80,12 @@ make: aclocal: No such file or directory
 make: *** .../include/mk/automake.mk:31: aclocal.m4] Error 127
 ```
 
-WSL2 has `Ubuntu` and `docker-desktop` registrations, but both are stopped;
-starting the Ubuntu instance currently fails with
-`HCS_SERVICE_NOT_AVAILABLE`. No Windows feature, distribution, or Docker
-daemon was changed during this audit. Once a Linux environment is available,
-the upstream path is:
+WSL2 Ubuntu is now available on this host. A Linux out-of-tree build was
+started there using an LF-normalized temporary source tree, but it was
+intentionally stopped: compiling the complete Linux LTP suite produces Linux
+user-space binaries and does not test uCore. No Windows feature, distribution,
+or Docker daemon was changed during the audit. If a native Linux LTP run is
+needed later, the upstream path is:
 
 ```sh
 make autotools
