@@ -27,6 +27,8 @@ struct net_socket {
     uint16_t port;
     uint32_t addr;
     bool bound;
+    bool connected;
+    struct sockaddr_in peer;
     volatile bool closed;
 };
 
@@ -39,10 +41,22 @@ void net_socket_get_descriptor(struct net_socket *socket);
 void net_socket_close_descriptor(struct net_socket *socket);
 int net_socket_bind(struct net_socket *socket,
                     const struct sockaddr_in *address, size_t length);
+int net_socket_connect(struct net_socket *socket,
+                       const struct sockaddr_in *address, size_t length);
 int net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
                       const struct sockaddr_in *destination, size_t dest_length);
 int net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
-                        struct sockaddr_in *source, size_t *source_length);
+                        struct sockaddr_in *source, size_t *source_length,
+                        bool nonblock);
+int net_socket_send(struct net_socket *socket, const void *data, size_t length);
+int net_socket_recv(struct net_socket *socket, void *data, size_t length,
+                    bool nonblock);
+int net_socket_getsockname(struct net_socket *socket,
+                           struct sockaddr_in *address);
+int net_socket_getpeername(struct net_socket *socket,
+                           struct sockaddr_in *address);
+int net_socket_poll(struct net_socket *socket, int16_t events,
+                    int16_t *revents_store);
 void net_get_stats(struct net_stats *stats);
 
 #endif /* !__KERN_NET_NET_H__ */

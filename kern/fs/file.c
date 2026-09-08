@@ -55,6 +55,7 @@ struct open_file {
     bool readable;
     bool writable;
     bool append;
+    uint32_t status_flags;
     off_t pos;
     union {
         struct inode *node;
@@ -175,6 +176,7 @@ open_file_create(enum open_file_kind kind, bool readable, bool writable,
     description->readable = readable;
     description->writable = writable;
     description->append = append;
+    description->status_flags = append ? O_APPEND : 0;
     description->pos = pos;
     description->object.node = object;
     sem_init(&description->operation_sem, 1);
@@ -242,7 +244,8 @@ fd_array_init(struct file *fd_array) {
     int fd;
     for (fd = 0; fd < FILES_STRUCT_NENTRY; fd ++) {
         fd_array[fd].status = FD_NONE;
-        fd_array[fd].fd = fd;
+    fd_array[fd].fd = fd;
+        fd_array[fd].fd_flags = 0;
         fd_array[fd].description = NULL;
     }
 }
@@ -270,6 +273,7 @@ fd_array_alloc(struct files_struct *filesp, int requested,
 
 found:
     filesp->fd_array[fd].status = FD_INIT;
+    filesp->fd_array[fd].fd_flags = 0;
     filesp->fd_array[fd].description = NULL;
     *file_store = &filesp->fd_array[fd];
     return 0;
@@ -298,6 +302,7 @@ fd_array_close(struct file *file) {
     assert(file->status == FD_OPENED && file->description != NULL);
     description = file->description;
     file->description = NULL;
+    file->fd_flags = 0;
     file->status = FD_NONE;
     open_file_drop_descriptor(description);
     return description;
@@ -312,6 +317,7 @@ fd_array_dup(struct file *to, const struct file *from) {
     description = from->description;
     open_file_get_descriptor(description);
     to->description = description;
+    to->fd_flags = from->fd_flags;
     to->status = FD_OPENED;
 }
 
@@ -408,6 +414,7 @@ file_open(char *path, uint32_t open_flags) {
         ret = -E_NO_MEM;
         goto failed_slot;
     }
+    description->status_flags |= open_flags & O_NONBLOCK;
 
     lock_files(filesp);
     fd_array_install(file, description);
@@ -486,7 +493,7 @@ pipe_get(struct pipe *pipe) {
 }
 
 static int
-pipe_read(struct pipe *pipe, void *base, size_t len) {
+pipe_read(struct pipe *pipe, void *base, size_t len, bool nonblock) {
     size_t copied;
     if (pipe == NULL || base == NULL || len == 0) {
         return len == 0 ? 0 : -E_INVAL;
@@ -516,6 +523,10 @@ pipe_read(struct pipe *pipe, void *base, size_t len) {
             spin_unlock(&pipe->lock);
             return 0;                /* EOF after the last writer closes */
         }
+        if (nonblock) {
+            spin_unlock(&pipe->lock);
+            return -E_BUSY;
+        }
         pipe->read_waiters++;
         spin_unlock(&pipe->lock);
         down(&pipe->read_sem);
@@ -523,7 +534,7 @@ pipe_read(struct pipe *pipe, void *base, size_t len) {
 }
 
 static int
-pipe_write(struct pipe *pipe, const void *base, size_t len) {
+pipe_write(struct pipe *pipe, const void *base, size_t len, bool nonblock) {
     size_t written = 0;
     if (pipe == NULL || base == NULL || len == 0) {
         return len == 0 ? 0 : -E_INVAL;
@@ -559,6 +570,10 @@ pipe_write(struct pipe *pipe, const void *base, size_t len) {
             spin_unlock(&pipe->lock);
             pipe_wake_readers(pipe, 0);
             continue;
+        }
+        if (nonblock) {
+            spin_unlock(&pipe->lock);
+            return written != 0 ? (int)written : -E_BUSY;
         }
         pipe->write_waiters++;
         spin_unlock(&pipe->lock);
@@ -658,7 +673,8 @@ file_read(int fd, void *base, size_t len, size_t *copied_store) {
             return -E_INVAL;
         }
         down(&description->operation_sem);
-        ret = pipe_read(description->object.pipe, base, len);
+        ret = pipe_read(description->object.pipe, base, len,
+                        (description->status_flags & O_NONBLOCK) != 0);
         up(&description->operation_sem);
         if (ret > 0) {
             *copied_store = (size_t)ret;
@@ -699,7 +715,8 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
             return -E_INVAL;
         }
         down(&description->operation_sem);
-        ret = pipe_write(description->object.pipe, base, len);
+        ret = pipe_write(description->object.pipe, base, len,
+                         (description->status_flags & O_NONBLOCK) != 0);
         up(&description->operation_sem);
         if (ret > 0) {
             *copied_store = (size_t)ret;
@@ -853,11 +870,140 @@ file_dup(int fd1, int fd2) {
         }
     }
     fd_array_dup(to, from);
+    to->fd_flags = 0;
     ret = to->fd;
 
 out_unlock:
     unlock_files(filesp);
     open_file_put(replaced);
+    return ret;
+}
+
+int
+file_fcntl(int fd, int command, uint32_t argument) {
+    struct files_struct *filesp = current_files();
+    struct open_file *description = NULL;
+    struct file *file;
+    int ret;
+
+    if (command == F_GETFD || command == F_SETFD) {
+        lock_files(filesp);
+        ret = fd2file_locked(filesp, fd, &file);
+        if (ret == 0) {
+            if (command == F_GETFD) {
+                ret = (int)file->fd_flags;
+            }
+            else if ((argument & ~FD_CLOEXEC) != 0) {
+                ret = -E_INVAL;
+            }
+            else {
+                file->fd_flags = argument;
+                ret = 0;
+            }
+        }
+        unlock_files(filesp);
+        return ret;
+    }
+    if (command == F_DUPFD) {
+        int target;
+        if ((int)argument < 0 || argument >= FILES_STRUCT_NENTRY) {
+            return -E_INVAL;
+        }
+        lock_files(filesp);
+        ret = fd2file_locked(filesp, fd, &file);
+        if (ret == 0) {
+            for (target = (int)argument; target < FILES_STRUCT_NENTRY;
+                 target++) {
+                if (filesp->fd_array[target].status == FD_NONE) {
+                    fd_array_dup(&filesp->fd_array[target], file);
+                    filesp->fd_array[target].fd_flags = 0;
+                    ret = target;
+                    break;
+                }
+            }
+            if (target == FILES_STRUCT_NENTRY) {
+                ret = -E_MAX_OPEN;
+            }
+        }
+        unlock_files(filesp);
+        return ret;
+    }
+    if (command != F_GETFL && command != F_SETFL) {
+        return -E_INVAL;
+    }
+    ret = fd_acquire(fd, &description);
+    if (ret != 0) {
+        return ret;
+    }
+    down(&description->operation_sem);
+    if (command == F_GETFL) {
+        ret = (int)(description->status_flags & (O_APPEND | O_NONBLOCK));
+        if (description->readable && description->writable) {
+            ret |= O_RDWR;
+        }
+        else if (description->writable) {
+            ret |= O_WRONLY;
+        }
+        else {
+            ret |= O_RDONLY;
+        }
+    }
+    else if ((argument & ~(O_APPEND | O_NONBLOCK)) != 0) {
+        ret = -E_INVAL;
+    }
+    else {
+        description->status_flags =
+            (description->status_flags & ~(O_APPEND | O_NONBLOCK)) |
+            (argument & (O_APPEND | O_NONBLOCK));
+        description->append = (description->status_flags & O_APPEND) != 0;
+        ret = 0;
+    }
+    up(&description->operation_sem);
+    open_file_put(description);
+    return ret;
+}
+
+int
+file_poll(int fd, int16_t events, int16_t *revents_store) {
+    struct open_file *description;
+    int ret;
+    int16_t revents = 0;
+
+    if (revents_store == NULL) {
+        return -E_INVAL;
+    }
+    *revents_store = 0;
+    ret = fd_acquire(fd, &description);
+    if (ret != 0) {
+        *revents_store = POLLNVAL;
+        return 0;
+    }
+    if (description->kind == OPEN_FILE_PIPE) {
+        struct pipe *pipe = description->object.pipe;
+        spin_lock(&pipe->lock);
+        if ((events & POLLIN) != 0 &&
+            (pipe->count != 0 || pipe->writers == 0)) {
+            revents |= pipe->count != 0 ? POLLIN : POLLHUP;
+        }
+        if ((events & POLLOUT) != 0 &&
+            (pipe->count < FS_PIPE_CAPACITY && pipe->readers != 0)) {
+            revents |= POLLOUT;
+        }
+        if (pipe->readers == 0) {
+            revents |= POLLERR;
+        }
+        spin_unlock(&pipe->lock);
+    }
+    else if (description->kind == OPEN_FILE_SOCKET) {
+        ret = net_socket_poll(description->object.socket, events, &revents);
+    }
+    else {
+        revents = events & (POLLIN | POLLOUT);
+    }
+    open_file_put(description);
+    if (ret == 0) {
+        *revents_store = revents;
+    }
     return ret;
 }
 
@@ -933,6 +1079,17 @@ file_socket_bind(int fd, const struct sockaddr_in *address, size_t length) {
 }
 
 int
+file_socket_connect(int fd, const struct sockaddr_in *address, size_t length) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_connect(description->object.socket, address, length);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
 file_socket_sendto(int fd, const void *data, size_t length,
                    const struct sockaddr_in *destination, size_t dest_length) {
     struct open_file *description;
@@ -952,7 +1109,53 @@ file_socket_recvfrom(int fd, void *data, size_t length,
     int ret = socket_file_acquire(fd, &description);
     if (ret == 0) {
         ret = net_socket_recvfrom(description->object.socket, data, length,
-                                  source, source_length);
+                                  source, source_length,
+                                  (description->status_flags & O_NONBLOCK) != 0);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_send(int fd, const void *data, size_t length) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_send(description->object.socket, data, length);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_recv(int fd, void *data, size_t length) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_recv(description->object.socket, data, length,
+                              (description->status_flags & O_NONBLOCK) != 0);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_getsockname(int fd, struct sockaddr_in *address) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_getsockname(description->object.socket, address);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_getpeername(int fd, struct sockaddr_in *address) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_getpeername(description->object.socket, address);
         open_file_put(description);
     }
     return ret;

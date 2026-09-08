@@ -142,6 +142,41 @@ sys_netstat(struct net_stats *stats) {
 }
 
 int
+sys_connect(int fd, const struct sockaddr_in *address, size_t length) {
+    return syscall3(SYS_connect, fd, (uintptr_t)address, length);
+}
+
+int
+sys_send(int fd, const void *data, size_t length) {
+    return syscall3(SYS_send, fd, (uintptr_t)data, length);
+}
+
+int
+sys_recv(int fd, void *data, size_t length) {
+    return syscall3(SYS_recv, fd, (uintptr_t)data, length);
+}
+
+int
+sys_getsockname(int fd, struct sockaddr_in *address, size_t length) {
+    return syscall3(SYS_getsockname, fd, (uintptr_t)address, length);
+}
+
+int
+sys_getpeername(int fd, struct sockaddr_in *address, size_t length) {
+    return syscall3(SYS_getpeername, fd, (uintptr_t)address, length);
+}
+
+int
+sys_fcntl(int fd, int command, uint32_t argument) {
+    return syscall3(SYS_fcntl, fd, command, argument);
+}
+
+int
+sys_poll(struct pollfd *fds, size_t count, int timeout_ms) {
+    return syscall3(SYS_poll, (uintptr_t)fds, count, timeout_ms);
+}
+
+int
 sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags) {
     return syscall4(SYS_mmap, (uintptr_t)addr, len, prot, flags);
 }

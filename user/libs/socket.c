@@ -12,6 +12,11 @@ bind(int fd, const struct sockaddr_in *address, size_t length) {
 }
 
 int
+connect(int fd, const struct sockaddr_in *address, size_t length) {
+    return sys_connect(fd, address, length);
+}
+
+int
 sendto(int fd, const void *data, size_t length,
        const struct sockaddr_in *destination, size_t dest_length) {
     return sys_sendto(fd, data, length, destination, dest_length);
@@ -21,6 +26,31 @@ int
 recvfrom(int fd, void *data, size_t length,
          struct sockaddr_in *source, size_t source_length) {
     return sys_recvfrom(fd, data, length, source, source_length);
+}
+
+int
+send(int fd, const void *data, size_t length) {
+    return sys_send(fd, data, length);
+}
+
+int
+recv(int fd, void *data, size_t length) {
+    return sys_recv(fd, data, length);
+}
+
+int
+getsockname(int fd, struct sockaddr_in *address, size_t length) {
+    return sys_getsockname(fd, address, length);
+}
+
+int
+getpeername(int fd, struct sockaddr_in *address, size_t length) {
+    return sys_getpeername(fd, address, length);
+}
+
+int
+poll(struct pollfd *fds, size_t count, int timeout_ms) {
+    return sys_poll(fds, count, timeout_ms);
 }
 
 int

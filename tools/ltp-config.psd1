@@ -3,6 +3,9 @@
     QemuPath = 'E:\toolsE\qemu\qemu-system-i386.exe'
     QemuMemory = '128M'
     QemuSmp = 4
+    QemuUserNet = $false
+    QemuHostUdpPort = 19100
+    QemuGuestUdpPort = 9100
     BuildTimeoutSeconds = 180
     QemuTimeoutSeconds = 45
 
@@ -15,8 +18,10 @@
         'mmaptest',
         'fdsharetest',
         'pipetest',
+        'polltest',
         'vfstest',
         'nettest',
+        'netconnecttest',
         'affinitytest',
         'schedtest',
         'cowtest',

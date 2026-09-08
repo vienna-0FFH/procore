@@ -4,6 +4,7 @@ param(
     [int]$QemuTimeoutSeconds = 0,
     [string]$QemuMemory = '',
     [int]$QemuSmp = 0,
+    [switch]$QemuUserNet,
     [string]$QemuPath = '',
     [string]$TccSource = 'user/hello.c',
     [string]$TccName = 'hello',
@@ -38,6 +39,13 @@ if ([string]::IsNullOrWhiteSpace($QemuMemory)) {
 if ($QemuSmp -le 0) {
     $QemuSmp = [int]$Config.QemuSmp
 }
+$UseQemuUserNet = $QemuUserNet.IsPresent -or [bool]$Config.QemuUserNet
+$QemuHostUdpPort = if ($Config.QemuHostUdpPort) {
+    [int]$Config.QemuHostUdpPort
+} else { 19100 }
+$QemuGuestUdpPort = if ($Config.QemuGuestUdpPort) {
+    [int]$Config.QemuGuestUdpPort
+} else { 9100 }
 $Qemu = if (-not [string]::IsNullOrWhiteSpace($QemuPath)) {
     $QemuPath
 } elseif (-not [string]::IsNullOrWhiteSpace($env:UCORE_QEMU)) {
@@ -102,6 +110,17 @@ function Wait-FileMarker([string]$Path, [string]$Marker,
         Start-Sleep -Milliseconds 250
     }
     return $false
+}
+
+function Send-HostUdpProbe([int]$Port) {
+    $client = New-Object System.Net.Sockets.UdpClient
+    try {
+        $payload = [System.Text.Encoding]::ASCII.GetBytes('net-probe')
+        [void]$client.Send($payload, $payload.Length, '127.0.0.1', $Port)
+    }
+    finally {
+        $client.Dispose()
+    }
 }
 
 $results = @()
@@ -172,9 +191,27 @@ foreach ($Test in $Tests) {
             '-drive', "format=raw,file=$NativeBin\swap.img,media=disk,cache=writeback",
             '-drive', "format=raw,file=$NativeBin\sfs.img,media=disk,cache=writeback"
         )
+        if ($UseQemuUserNet) {
+            $qemuArgs += @(
+                '-net', 'none',
+                '-netdev', "user,id=net0,hostfwd=udp:127.0.0.1:$QemuHostUdpPort-10.0.2.15:$QemuGuestUdpPort",
+                '-device', 'e1000,netdev=net0'
+            )
+        }
         $qemuProcess = Start-Process -FilePath $Qemu -ArgumentList $qemuArgs `
             -RedirectStandardOutput $qemuOut -RedirectStandardError $qemuErr `
             -PassThru -WindowStyle Hidden
+
+        if ($UseQemuUserNet -and $Test -eq 'netexternal') {
+            # Boot and the guest's three-second probe delay are variable on
+            # SMP QEMU. Repeat the small UDP probe while the guest binds its
+            # socket; the test consumes the first packet that arrives after
+            # bind and exits normally.
+            for ($probe = 0; $probe -lt 7; $probe++) {
+                Start-Sleep -Milliseconds 500
+                Send-HostUdpProbe $QemuHostUdpPort
+            }
+        }
 
         $qemuOk = Wait-FileMarker $serialLog 'user-test-result: status=' `
             $qemuProcess $QemuTimeoutSeconds

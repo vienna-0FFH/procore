@@ -16,6 +16,7 @@
 #include <net.h>
 #include <file.h>
 #include <kmalloc.h>
+#include <fs_config.h>
 
 static int
 sys_exit(uint32_t arg[]) {
@@ -480,6 +481,180 @@ sys_netstat(uint32_t arg[]) {
     return 0;
 }
 
+static int
+sys_connect(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in address;
+    int ret;
+    if (mm == NULL || (size_t)arg[2] < sizeof(address)) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    ret = copy_from_user(mm, &address, (void *)arg[1], sizeof(address), 0);
+    unlock_mm(mm);
+    if (!ret) {
+        return -E_INVAL;
+    }
+    return file_socket_connect((int)arg[0], &address, (size_t)arg[2]);
+}
+
+static int
+sys_send(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    void *buffer;
+    size_t length = (size_t)arg[2];
+    int ret;
+    if (mm == NULL || length == 0 || length > NET_MAX_DATAGRAM) {
+        return -E_INVAL;
+    }
+    if ((buffer = kmalloc(length)) == NULL) {
+        return -E_NO_MEM;
+    }
+    lock_mm(mm);
+    ret = copy_from_user(mm, buffer, (void *)arg[1], length, 0);
+    unlock_mm(mm);
+    if (!ret) {
+        kfree(buffer);
+        return -E_INVAL;
+    }
+    ret = file_socket_send((int)arg[0], buffer, length);
+    kfree(buffer);
+    return ret;
+}
+
+static int
+sys_recv(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    void *buffer;
+    size_t length = (size_t)arg[2];
+    int ret;
+    if (mm == NULL || length == 0 || length > NET_MAX_DATAGRAM) {
+        return -E_INVAL;
+    }
+    if ((buffer = kmalloc(length)) == NULL) {
+        return -E_NO_MEM;
+    }
+    ret = file_socket_recv((int)arg[0], buffer, length);
+    if (ret > 0) {
+        lock_mm(mm);
+        if (!copy_to_user(mm, (void *)arg[1], buffer, (size_t)ret)) {
+            ret = -E_INVAL;
+        }
+        unlock_mm(mm);
+    }
+    kfree(buffer);
+    return ret;
+}
+
+static int
+sys_getsockname(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in address;
+    int ret;
+    if (mm == NULL || arg[1] == 0 || (size_t)arg[2] < sizeof(address)) {
+        return -E_INVAL;
+    }
+    ret = file_socket_getsockname((int)arg[0], &address);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &address, sizeof(address))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_getpeername(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in address;
+    int ret;
+    if (mm == NULL || arg[1] == 0 || (size_t)arg[2] < sizeof(address)) {
+        return -E_INVAL;
+    }
+    ret = file_socket_getpeername((int)arg[0], &address);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &address, sizeof(address))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_fcntl(uint32_t arg[]) {
+    return file_fcntl((int)arg[0], (int)arg[1], arg[2]);
+}
+
+static int
+sys_poll(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct pollfd *fds;
+    size_t count = (size_t)arg[1];
+    int timeout = (int)arg[2];
+    size_t bytes;
+    size_t i;
+    size_t start;
+    int ready;
+    int ret = 0;
+
+    if (mm == NULL || count > FS_POLL_MAX_FDS ||
+        (count != 0 && arg[0] == 0) || timeout < -1) {
+        return -E_INVAL;
+    }
+    bytes = count * sizeof(struct pollfd);
+    fds = count == 0 ? NULL : kmalloc(bytes);
+    if (count != 0 && fds == NULL) {
+        return -E_NO_MEM;
+    }
+    lock_mm(mm);
+    if (count != 0 && !copy_from_user(mm, fds, (void *)arg[0], bytes, 0)) {
+        unlock_mm(mm);
+        kfree(fds);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+
+    start = ticks;
+    for (;;) {
+        ready = 0;
+        for (i = 0; i < count; i++) {
+            int16_t revents = 0;
+            if (file_poll(fds[i].fd, fds[i].events, &revents) != 0) {
+                revents = POLLNVAL;
+            }
+            fds[i].revents = revents;
+            if (revents != 0) {
+                ready++;
+            }
+        }
+        if (ready != 0 || timeout == 0) {
+            ret = ready;
+            break;
+        }
+        if (timeout > 0 && (size_t)(ticks - start) >=
+            ((size_t)timeout + 9) / 10) {
+            ret = 0;
+            break;
+        }
+        do_sleep(1);
+    }
+    if (count != 0) {
+        lock_mm(mm);
+        if (!copy_to_user(mm, (void *)arg[0], fds, bytes)) {
+            ret = -E_INVAL;
+        }
+        unlock_mm(mm);
+    }
+    kfree(fds);
+    return ret;
+}
+
 static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_exit]              sys_exit,
     [SYS_fork]              sys_fork,
@@ -525,6 +700,13 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_sendto]            sys_sendto,
     [SYS_recvfrom]          sys_recvfrom,
     [SYS_netstat]           sys_netstat,
+    [SYS_connect]           sys_connect,
+    [SYS_send]              sys_send,
+    [SYS_recv]              sys_recv,
+    [SYS_getsockname]       sys_getsockname,
+    [SYS_getpeername]       sys_getpeername,
+    [SYS_fcntl]             sys_fcntl,
+    [SYS_poll]              sys_poll,
 };
 
 #define NUM_SYSCALLS        ((sizeof(syscalls)) / (sizeof(syscalls[0])))

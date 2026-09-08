@@ -66,6 +66,11 @@ pipe2(int fd[2], uint32_t flags) {
     return sys_pipe2(fd, flags);
 }
 
+int
+fcntl(int fd, int command, uint32_t argument) {
+    return sys_fcntl(fd, command, argument);
+}
+
 static char
 transmode(struct stat *stat) {
     uint32_t mode = stat->st_mode;

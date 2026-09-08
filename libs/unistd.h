@@ -39,6 +39,11 @@
 #define SYS_sendto          142
 #define SYS_recvfrom        143
 #define SYS_netstat         144
+#define SYS_connect         145
+#define SYS_send            146
+#define SYS_recv            147
+#define SYS_getsockname     148
+#define SYS_getpeername     149
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -58,6 +63,8 @@
 #define SYS_rename          134
 #define SYS_pipe            135
 #define SYS_pipe2           136
+#define SYS_fcntl           137
+#define SYS_poll            138
 /* OLNY FOR core */
 #define SYS_lab6_set_priority 255
 
@@ -102,8 +109,30 @@ struct cpu_stat {
 #define O_EXCL              0x00000008  // error if O_CREAT and the file exists
 #define O_TRUNC             0x00000010  // truncate file upon open
 #define O_APPEND            0x00000020  // append on each write
+#define O_NONBLOCK          0x00004000  // do not wait for pipe/socket readiness
 // additonal related definition
 #define O_ACCMODE           3           // mask for O_RDONLY / O_WRONLY / O_RDWR
+
+/* fcntl commands and descriptor flags. */
+#define F_DUPFD             0
+#define F_GETFD             1
+#define F_SETFD             2
+#define F_GETFL             3
+#define F_SETFL             4
+#define FD_CLOEXEC          0x00000001
+
+/* poll event bits. */
+#define POLLIN              0x0001
+#define POLLOUT             0x0004
+#define POLLERR             0x0008
+#define POLLHUP             0x0010
+#define POLLNVAL            0x0020
+
+struct pollfd {
+    int fd;
+    int16_t events;
+    int16_t revents;
+};
 
 #define NO_FD               -0x9527     // invalid fd
 

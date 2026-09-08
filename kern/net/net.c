@@ -288,6 +288,13 @@ net_address_valid(const struct sockaddr_in *address, size_t length) {
             address->sin_addr == NET_LOCAL_IP);
 }
 
+static bool
+net_destination_valid(const struct sockaddr_in *address, size_t length) {
+    return address != NULL && length >= sizeof(*address) &&
+           address->sin_family == AF_INET &&
+           address->sin_addr != INADDR_ANY && address->sin_port != 0;
+}
+
 static struct net_socket *
 net_find_port_locked(uint16_t port, struct net_socket *exclude) {
     list_entry_t *entry = &net_socket_list;
@@ -399,6 +406,8 @@ net_socket_create(int domain, int type, int protocol) {
     socket->port = 0;
     socket->addr = INADDR_ANY;
     socket->bound = 0;
+    socket->connected = 0;
+    memset(&socket->peer, 0, sizeof(socket->peer));
     socket->closed = 0;
 
     spin_lock(&net_socket_lock);
@@ -508,6 +517,42 @@ net_socket_bind(struct net_socket *socket,
 }
 
 int
+net_socket_connect(struct net_socket *socket,
+                   const struct sockaddr_in *address, size_t length) {
+    uint16_t port;
+    int ret = 0;
+
+    if (socket == NULL || !net_destination_valid(address, length)) {
+        return -E_INVAL;
+    }
+    spin_lock(&net_socket_lock);
+    if (socket->closed) {
+        ret = -E_BAD_PROC;
+    }
+    else if (socket->connected) {
+        ret = (socket->peer.sin_addr == address->sin_addr &&
+               socket->peer.sin_port == address->sin_port) ?
+              0 : -E_BUSY;
+    }
+    else {
+        if (!socket->bound) {
+            ret = net_allocate_port_locked(&port);
+            if (ret == 0) {
+                socket->port = port;
+                socket->addr = INADDR_ANY;
+                socket->bound = 1;
+            }
+        }
+        if (ret == 0) {
+            socket->peer = *address;
+            socket->connected = 1;
+        }
+    }
+    spin_unlock(&net_socket_lock);
+    return ret;
+}
+
+int
 net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
                   const struct sockaddr_in *destination, size_t dest_length) {
     struct net_socket *target;
@@ -589,7 +634,8 @@ net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
 
 int
 net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
-                    struct sockaddr_in *source, size_t *source_length) {
+                    struct sockaddr_in *source, size_t *source_length,
+                    bool nonblock) {
     struct net_packet *packet;
     list_entry_t *entry;
     size_t copied;
@@ -602,6 +648,10 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
         if (socket->closed) {
             spin_unlock(&socket->lock);
             return -E_BAD_PROC;
+        }
+        if (nonblock && socket->rx_count == 0) {
+            spin_unlock(&socket->lock);
+            return -E_BUSY;
         }
         socket->waiters++;
         spin_unlock(&socket->lock);
@@ -631,6 +681,113 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
     }
     kfree(packet);
     return (int)copied;
+}
+
+int
+net_socket_send(struct net_socket *socket, const void *data, size_t length) {
+    struct sockaddr_in peer;
+    if (socket == NULL) {
+        return -E_INVAL;
+    }
+    spin_lock(&net_socket_lock);
+    if (!socket->connected) {
+        spin_unlock(&net_socket_lock);
+        return -E_INVAL;
+    }
+    peer = socket->peer;
+    spin_unlock(&net_socket_lock);
+    return net_socket_sendto(socket, data, length, &peer, sizeof(peer));
+}
+
+int
+net_socket_recv(struct net_socket *socket, void *data, size_t length,
+                bool nonblock) {
+    struct sockaddr_in expected;
+    struct sockaddr_in source;
+    int ret;
+    if (socket == NULL) {
+        return -E_INVAL;
+    }
+    for (;;) {
+        size_t source_length = sizeof(source);
+        spin_lock(&net_socket_lock);
+        if (!socket->connected) {
+            spin_unlock(&net_socket_lock);
+            return -E_INVAL;
+        }
+        expected = socket->peer;
+        spin_unlock(&net_socket_lock);
+        ret = net_socket_recvfrom(socket, data, length, &source,
+                                  &source_length, nonblock);
+        if (ret < 0) {
+            return ret;
+        }
+        if (source.sin_addr == expected.sin_addr &&
+            source.sin_port == expected.sin_port) {
+            return ret;
+        }
+        /* A connected datagram socket discards packets from other peers and
+         * waits for the next matching packet without recursive stack growth. */
+    }
+}
+
+int
+net_socket_getsockname(struct net_socket *socket,
+                       struct sockaddr_in *address) {
+    if (socket == NULL || address == NULL) {
+        return -E_INVAL;
+    }
+    spin_lock(&net_socket_lock);
+    if (socket->closed || !socket->bound) {
+        spin_unlock(&net_socket_lock);
+        return -E_INVAL;
+    }
+    memset(address, 0, sizeof(*address));
+    address->sin_family = AF_INET;
+    address->sin_port = socket->port;
+    address->sin_addr = socket->addr;
+    spin_unlock(&net_socket_lock);
+    return 0;
+}
+
+int
+net_socket_getpeername(struct net_socket *socket,
+                       struct sockaddr_in *address) {
+    if (socket == NULL || address == NULL) {
+        return -E_INVAL;
+    }
+    spin_lock(&net_socket_lock);
+    if (socket->closed || !socket->connected) {
+        spin_unlock(&net_socket_lock);
+        return -E_INVAL;
+    }
+    *address = socket->peer;
+    spin_unlock(&net_socket_lock);
+    return 0;
+}
+
+int
+net_socket_poll(struct net_socket *socket, int16_t events,
+                int16_t *revents_store) {
+    int16_t revents = 0;
+    if (socket == NULL || revents_store == NULL) {
+        return -E_INVAL;
+    }
+    spin_lock(&socket->lock);
+    if (socket->closed) {
+        revents |= POLLHUP | POLLERR;
+    }
+    else {
+        if ((events & POLLIN) != 0 && socket->rx_count != 0) {
+            revents |= POLLIN;
+        }
+        if ((events & POLLOUT) != 0) {
+            revents |= POLLOUT;
+        }
+    }
+    spin_unlock(&socket->lock);
+    *revents_store = revents;
+    return 0;
 }
 
 void
