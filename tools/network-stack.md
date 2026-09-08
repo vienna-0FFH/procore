@@ -34,3 +34,8 @@ The guest connects to `10.0.2.2:18080`, sends an HTTP/1.0 request, and checks
 that a response header and body arrive through the kernel TCP path. The test
 server is started from `tools/http-test-root/index.html` and is terminated by
 the runner after QEMU exits.
+
+For a real name-based request from the shell, the image also contains
+`/webget`: `/webget example.com /`. It resolves the A record through the
+QEMU DNS proxy and then uses TCP port 80. HTTPS still needs the TLS milestone
+described above.
