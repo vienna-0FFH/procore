@@ -31,11 +31,17 @@ static struct net_socket *
 net_find_port_locked(uint16_t port, struct net_socket *exclude);
 static struct net_socket *
 net_find_port_addr_locked(uint16_t port, uint32_t addr);
+static struct net_socket *
+net_find_tcp_locked(uint16_t port, uint32_t addr, uint16_t peer_port);
+static void
+net_receive_tcp_frame(const uint8_t *frame, size_t length,
+                      const uint8_t source_mac[NET_ETH_ADDR_LEN]);
 
 static int
 net_queue_packet(struct net_socket *socket, const void *data, size_t length,
                  uint32_t source_ip, uint16_t source_port) {
     struct net_packet *packet;
+    int queue_limit;
     if (socket == NULL || data == NULL || length == 0 ||
         length > NET_MAX_DATAGRAM) {
         return -E_INVAL;
@@ -52,14 +58,21 @@ net_queue_packet(struct net_socket *socket, const void *data, size_t length,
     packet->from.sin_addr = source_ip;
     memset(packet->from.sin_zero, 0, sizeof(packet->from.sin_zero));
     memcpy(packet->data, data, length);
+    queue_limit = socket->type == SOCK_STREAM ?
+                  NET_TCP_RX_QUEUE_LIMIT : NET_RX_QUEUE_LIMIT;
     spin_lock(&socket->lock);
-    if (socket->closed || socket->rx_count >= NET_RX_QUEUE_LIMIT) {
+    if (socket->closed || socket->rx_count >= queue_limit) {
         spin_unlock(&socket->lock);
         kfree(packet);
         atomic_inc_return((volatile int *)&net_statistics.dropped_packets);
         return -E_BUSY;
     }
-    list_add(&socket->rx_queue, &packet->link);
+    if (socket->type == SOCK_STREAM) {
+        list_add_before(&socket->rx_queue, &packet->link);
+    }
+    else {
+        list_add(&socket->rx_queue, &packet->link);
+    }
     socket->rx_count++;
     spin_unlock(&socket->lock);
     up(&socket->rx_sem);
@@ -199,6 +212,46 @@ net_resolve_arp(uint32_t target_ip, uint8_t mac[NET_ETH_ADDR_LEN]) {
     return -E_NOENT;
 }
 
+static int
+net_tcp_send_segment(struct net_socket *socket, uint8_t flags,
+                     uint32_t sequence, uint32_t acknowledgement,
+                     const void *payload, size_t payload_length) {
+    uint8_t destination_mac[NET_ETH_ADDR_LEN];
+    uint8_t frame[NET_FRAME_CAPACITY];
+    struct sockaddr_in peer;
+    uint32_t source_ip;
+    uint32_t next_hop;
+    int frame_length;
+    int ret;
+
+    if (socket == NULL || socket->type != SOCK_STREAM ||
+        payload_length > NET_TCP_MSS) {
+        return -E_INVAL;
+    }
+    peer = socket->peer;
+    source_ip = socket->addr == INADDR_ANY ? NET_LOCAL_IP : socket->addr;
+    next_hop = (peer.sin_addr & NET_NETMASK) ==
+               (NET_LOCAL_IP & NET_NETMASK) ? peer.sin_addr : NET_GATEWAY_IP;
+    ret = net_resolve_arp(next_hop, destination_mac);
+    if (ret < 0) {
+        return ret;
+    }
+    frame_length = net_build_tcp_frame(
+        frame, sizeof(frame), net_local_mac, destination_mac,
+        source_ip, peer.sin_addr, socket->port, peer.sin_port,
+        sequence, acknowledgement, flags, htons(65535), payload,
+        payload_length, ++net_ip_identification);
+    if (frame_length < 0) {
+        return frame_length;
+    }
+    ret = net_send_frame(frame, (size_t)frame_length);
+    if (ret < 0) {
+        return ret;
+    }
+    atomic_inc_return((volatile int *)&net_statistics.tx_packets);
+    return (int)payload_length;
+}
+
 static void
 net_send_arp_reply(const struct net_arp_packet *request,
                    const uint8_t destination_mac[NET_ETH_ADDR_LEN]) {
@@ -229,6 +282,7 @@ net_receive_frame(const uint8_t *frame, size_t length) {
     struct net_arp_packet arp;
     uint16_t source_port, destination_port;
     uint32_t source_ip, destination_ip;
+    const struct net_ipv4_header *ip;
     const uint8_t *payload;
     size_t payload_length;
     struct net_socket *socket;
@@ -255,6 +309,15 @@ net_receive_frame(const uint8_t *frame, size_t length) {
         return;
     }
     if (ntohs(ethernet->ethertype) != NET_ETHERTYPE_IPV4 ||
+        length < NET_ETH_HEADER_LEN + NET_IPV4_MIN_HEADER_LEN) {
+        return;
+    }
+    ip = (const struct net_ipv4_header *)(frame + NET_ETH_HEADER_LEN);
+    if (ip->protocol == NET_IPPROTO_TCP) {
+        net_receive_tcp_frame(frame, length, ethernet->source);
+        return;
+    }
+    if (ip->protocol != NET_IPPROTO_UDP ||
         net_parse_udp_frame(frame, length, NET_LOCAL_IP, &source_port,
                             &destination_port, &source_ip, &destination_ip,
                             &payload, &payload_length) != 0) {
@@ -320,6 +383,116 @@ net_find_port_addr_locked(uint16_t port, uint32_t addr) {
     return NULL;
 }
 
+static struct net_socket *
+net_find_tcp_locked(uint16_t port, uint32_t addr, uint16_t peer_port) {
+    list_entry_t *entry = &net_socket_list;
+    while ((entry = list_next(entry)) != &net_socket_list) {
+        struct net_socket *socket = to_struct(entry, struct net_socket, link);
+        if (socket->type == SOCK_STREAM && socket->bound &&
+            socket->port == port && socket->connected &&
+            socket->peer.sin_addr == addr &&
+            socket->peer.sin_port == peer_port) {
+            return socket;
+        }
+    }
+    return NULL;
+}
+
+static void
+net_receive_tcp_frame(const uint8_t *frame, size_t length,
+                      const uint8_t source_mac[NET_ETH_ADDR_LEN]) {
+    uint16_t source_port, destination_port;
+    uint32_t source_ip, destination_ip, sequence, acknowledgement;
+    uint8_t flags;
+    const uint8_t *payload;
+    size_t payload_length;
+    struct net_socket *socket;
+    bool send_ack = 0;
+    bool mark_eof = 0;
+    bool queue_data = 0;
+    int parse_ret;
+
+    parse_ret = net_parse_tcp_frame(frame, length, NET_LOCAL_IP, &source_port,
+                            &destination_port, &source_ip, &destination_ip,
+                            &sequence, &acknowledgement, &flags, &payload,
+                            &payload_length);
+    if (parse_ret != 0) {
+        return;
+    }
+    spin_lock(&net_device_lock);
+    net_arp_update_locked(source_ip, source_mac);
+    spin_unlock(&net_device_lock);
+    spin_lock(&net_socket_lock);
+    socket = net_find_tcp_locked(destination_port, source_ip, source_port);
+    if (socket != NULL) {
+        net_socket_get(socket);
+    }
+    spin_unlock(&net_socket_lock);
+    if (socket == NULL) {
+        return;
+    }
+
+    spin_lock(&socket->lock);
+    if (!socket->closed && socket->tcp_state == NET_TCP_SYN_SENT &&
+        (flags & (NET_TCP_SYN | NET_TCP_ACK)) ==
+        (NET_TCP_SYN | NET_TCP_ACK) &&
+        acknowledgement == socket->tcp_snd_nxt) {
+        socket->tcp_rcv_nxt = sequence + 1;
+        socket->tcp_snd_una = acknowledgement;
+        socket->tcp_state = NET_TCP_ESTABLISHED;
+        send_ack = 1;
+    }
+    else if (!socket->closed &&
+             (socket->tcp_state == NET_TCP_ESTABLISHED ||
+              socket->tcp_state == NET_TCP_CLOSE_WAIT)) {
+        if ((flags & NET_TCP_RST) != 0) {
+            socket->tcp_state = NET_TCP_CLOSED;
+            socket->tcp_eof = 1;
+            mark_eof = 1;
+        }
+        else {
+            if ((flags & NET_TCP_ACK) != 0 &&
+                acknowledgement > socket->tcp_snd_una &&
+                acknowledgement <= socket->tcp_snd_nxt) {
+                socket->tcp_snd_una = acknowledgement;
+            }
+            if (sequence == socket->tcp_rcv_nxt && payload_length != 0) {
+                socket->tcp_rcv_nxt += (uint32_t)payload_length;
+                queue_data = 1;
+                send_ack = 1;
+            }
+            if ((flags & NET_TCP_FIN) != 0 &&
+                sequence + (uint32_t)payload_length == socket->tcp_rcv_nxt) {
+                socket->tcp_rcv_nxt++;
+                socket->tcp_state = NET_TCP_CLOSE_WAIT;
+                socket->tcp_eof = 1;
+                send_ack = 1;
+                mark_eof = 1;
+            }
+        }
+    }
+    spin_unlock(&socket->lock);
+
+    if (queue_data) {
+        if (net_queue_packet(socket, payload, payload_length,
+                             source_ip, source_port) == 0) {
+            atomic_inc_return((volatile int *)&net_statistics.rx_packets);
+        }
+    }
+    if (send_ack) {
+        uint32_t ack;
+        spin_lock(&socket->lock);
+        ack = socket->tcp_rcv_nxt;
+        spin_unlock(&socket->lock);
+        (void)net_tcp_send_segment(socket, NET_TCP_ACK,
+                                   socket->tcp_snd_nxt, ack, NULL, 0);
+    }
+    if (mark_eof) {
+        up(&socket->rx_sem);
+    }
+    net_socket_put(socket);
+}
+
 static int
 net_allocate_port_locked(uint16_t *port_store) {
     uint32_t count = (uint32_t)NET_EPHEMERAL_LAST - NET_EPHEMERAL_FIRST + 1;
@@ -362,7 +535,7 @@ net_init(void) {
         net_statistics.hw_tx_errors = hardware.tx_errors;
         net_statistics.hw_rx_errors = hardware.rx_errors;
     }
-    cprintf("net: IPv4 UDP loopback ready\n");
+    cprintf("net: IPv4 UDP and active TCP client ready\n");
 }
 
 void
@@ -387,8 +560,10 @@ struct net_socket *
 net_socket_create(int domain, int type, int protocol) {
     struct net_socket *socket;
 
-    if (!net_ready || domain != AF_INET || type != SOCK_DGRAM ||
-        (protocol != 0 && protocol != IPPROTO_UDP)) {
+    if (!net_ready || domain != AF_INET ||
+        (type != SOCK_DGRAM && type != SOCK_STREAM) ||
+        (type == SOCK_DGRAM && protocol != 0 && protocol != IPPROTO_UDP) ||
+        (type == SOCK_STREAM && protocol != 0 && protocol != IPPROTO_TCP)) {
         return NULL;
     }
     socket = kmalloc(sizeof(*socket));
@@ -403,11 +578,19 @@ net_socket_create(int domain, int type, int protocol) {
     socket->waiters = 0;
     socket->ref_count = 1;
     socket->descriptor_count = 1;
+    socket->type = type;
+    socket->protocol = type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
     socket->port = 0;
     socket->addr = INADDR_ANY;
     socket->bound = 0;
     socket->connected = 0;
     memset(&socket->peer, 0, sizeof(socket->peer));
+    socket->tcp_state = NET_TCP_CLOSED;
+    socket->tcp_snd_una = 0;
+    socket->tcp_snd_nxt = 0;
+    socket->tcp_rcv_nxt = 0;
+    socket->connect_waiters = 0;
+    socket->tcp_eof = 0;
     socket->closed = 0;
 
     spin_lock(&net_socket_lock);
@@ -525,6 +708,76 @@ net_socket_connect(struct net_socket *socket,
     if (socket == NULL || !net_destination_valid(address, length)) {
         return -E_INVAL;
     }
+    if (socket->type == SOCK_STREAM) {
+        size_t start_tick;
+        uint32_t sequence;
+        spin_lock(&net_socket_lock);
+        if (socket->closed) {
+            spin_unlock(&net_socket_lock);
+            return -E_BAD_PROC;
+        }
+        if (socket->connected) {
+            ret = (socket->peer.sin_addr == address->sin_addr &&
+                   socket->peer.sin_port == address->sin_port &&
+                   socket->tcp_state == NET_TCP_ESTABLISHED) ?
+                  0 : -E_BUSY;
+            spin_unlock(&net_socket_lock);
+            return ret;
+        }
+        if (!socket->bound) {
+            ret = net_allocate_port_locked(&port);
+            if (ret == 0) {
+                socket->port = port;
+                socket->addr = INADDR_ANY;
+                socket->bound = 1;
+            }
+        }
+        if (ret == 0) {
+            socket->peer = *address;
+            sequence = ((uint32_t)ticks << 16) ^
+                       ((uint32_t)(uintptr_t)socket >> 4);
+            socket->tcp_snd_una = sequence;
+            socket->tcp_snd_nxt = sequence + 1;
+            socket->tcp_rcv_nxt = 0;
+            socket->tcp_state = NET_TCP_SYN_SENT;
+            socket->tcp_eof = 0;
+            socket->connected = 1;
+        }
+        spin_unlock(&net_socket_lock);
+        if (ret != 0) {
+            return ret;
+        }
+        ret = net_tcp_send_segment(socket, NET_TCP_SYN, sequence, 0,
+                                   NULL, 0);
+        if (ret < 0) {
+            spin_lock(&socket->lock);
+            socket->tcp_state = NET_TCP_CLOSED;
+            socket->connected = 0;
+            spin_unlock(&socket->lock);
+            return ret;
+        }
+        start_tick = ticks;
+        while ((size_t)(ticks - start_tick) < NET_TCP_CONNECT_TIMEOUT) {
+            enum { WAITING, CONNECTED, FAILED } state;
+            spin_lock(&socket->lock);
+            state = socket->tcp_state == NET_TCP_ESTABLISHED ? CONNECTED :
+                    (socket->tcp_state == NET_TCP_CLOSED ? FAILED : WAITING);
+            spin_unlock(&socket->lock);
+            if (state == CONNECTED) {
+                return 0;
+            }
+            if (state == FAILED) {
+                return -E_NOENT;
+            }
+            net_poll();
+            asm volatile ("pause");
+        }
+        spin_lock(&socket->lock);
+        socket->tcp_state = NET_TCP_CLOSED;
+        socket->connected = 0;
+        spin_unlock(&socket->lock);
+        return -E_TIMEOUT;
+    }
     spin_lock(&net_socket_lock);
     if (socket->closed) {
         ret = -E_BAD_PROC;
@@ -564,7 +817,7 @@ net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
     int frame_length;
     int ret;
 
-    if (socket == NULL || data == NULL || length == 0 ||
+    if (socket == NULL || socket->type != SOCK_DGRAM || data == NULL || length == 0 ||
         length > NET_MAX_DATAGRAM ||
         destination == NULL || dest_length < sizeof(*destination) ||
         destination->sin_family != AF_INET ||
@@ -640,7 +893,8 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
     list_entry_t *entry;
     size_t copied;
 
-    if (socket == NULL || data == NULL || length == 0) {
+    if (socket == NULL || socket->type != SOCK_DGRAM ||
+        data == NULL || length == 0) {
         return -E_INVAL;
     }
     for (;;) {
@@ -686,8 +940,38 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
 int
 net_socket_send(struct net_socket *socket, const void *data, size_t length) {
     struct sockaddr_in peer;
+    size_t offset = 0;
     if (socket == NULL) {
         return -E_INVAL;
+    }
+    if (socket->type == SOCK_STREAM) {
+        if (data == NULL || length == 0) {
+            return -E_INVAL;
+        }
+        while (offset < length) {
+            size_t chunk = length - offset;
+            uint32_t sequence, acknowledgement;
+            if (chunk > NET_TCP_MSS) {
+                chunk = NET_TCP_MSS;
+            }
+            spin_lock(&socket->lock);
+            if (socket->closed || socket->tcp_state != NET_TCP_ESTABLISHED) {
+                spin_unlock(&socket->lock);
+                return offset != 0 ? (int)offset : -E_BAD_PROC;
+            }
+            sequence = socket->tcp_snd_nxt;
+            acknowledgement = socket->tcp_rcv_nxt;
+            socket->tcp_snd_nxt += (uint32_t)chunk;
+            spin_unlock(&socket->lock);
+            if (net_tcp_send_segment(socket, NET_TCP_ACK | NET_TCP_PSH,
+                                     sequence, acknowledgement,
+                                     (const uint8_t *)data + offset,
+                                     chunk) < 0) {
+                return offset != 0 ? (int)offset : -E_NA_DEV;
+            }
+            offset += chunk;
+        }
+        return (int)offset;
     }
     spin_lock(&net_socket_lock);
     if (!socket->connected) {
@@ -707,6 +991,57 @@ net_socket_recv(struct net_socket *socket, void *data, size_t length,
     int ret;
     if (socket == NULL) {
         return -E_INVAL;
+    }
+    if (socket->type == SOCK_STREAM) {
+        struct net_packet *packet;
+        list_entry_t *entry;
+        for (;;) {
+            spin_lock(&socket->lock);
+            if (socket->rx_count != 0) {
+                entry = list_next(&socket->rx_queue);
+                packet = to_struct(entry, struct net_packet, link);
+                list_del_init(entry);
+                socket->rx_count--;
+                spin_unlock(&socket->lock);
+                {
+                    size_t copied = packet->len < length ? packet->len : length;
+                    memcpy(data, packet->data, copied);
+                    if (copied < packet->len) {
+                        /* The current stream queue is packet based. Keep the
+                         * unread tail as a new packet for the next recv. */
+                        size_t tail = packet->len - copied;
+                        memmove(packet->data, packet->data + copied, tail);
+                        packet->len = tail;
+                        spin_lock(&socket->lock);
+                        list_add_after(&socket->rx_queue, &packet->link);
+                        socket->rx_count++;
+                        spin_unlock(&socket->lock);
+                    }
+                    else {
+                        kfree(packet);
+                    }
+                    return (int)copied;
+                }
+            }
+            if (socket->tcp_eof) {
+                spin_unlock(&socket->lock);
+                return 0;
+            }
+            if (socket->closed || socket->tcp_state == NET_TCP_CLOSED) {
+                spin_unlock(&socket->lock);
+                return -E_BAD_PROC;
+            }
+            if (nonblock) {
+                spin_unlock(&socket->lock);
+                return -E_BUSY;
+            }
+            socket->waiters++;
+            spin_unlock(&socket->lock);
+            down(&socket->rx_sem);
+            spin_lock(&socket->lock);
+            socket->waiters--;
+            spin_unlock(&socket->lock);
+        }
     }
     for (;;) {
         size_t source_length = sizeof(source);
@@ -776,6 +1111,16 @@ net_socket_poll(struct net_socket *socket, int16_t events,
     spin_lock(&socket->lock);
     if (socket->closed) {
         revents |= POLLHUP | POLLERR;
+    }
+    else if (socket->type == SOCK_STREAM) {
+        if ((events & POLLIN) != 0 &&
+            (socket->rx_count != 0 || socket->tcp_eof)) {
+            revents |= POLLIN;
+        }
+        if ((events & POLLOUT) != 0 &&
+            socket->tcp_state == NET_TCP_ESTABLISHED) {
+            revents |= POLLOUT;
+        }
     }
     else {
         if ((events & POLLIN) != 0 && socket->rx_count != 0) {

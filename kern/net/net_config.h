@@ -68,6 +68,18 @@
 #define NET_IP_TTL                   64U
 #endif
 
+#ifndef NET_TCP_MSS
+#define NET_TCP_MSS                  1400U
+#endif
+
+#ifndef NET_TCP_CONNECT_TIMEOUT
+#define NET_TCP_CONNECT_TIMEOUT      500U
+#endif
+
+#ifndef NET_TCP_RX_QUEUE_LIMIT
+#define NET_TCP_RX_QUEUE_LIMIT       32U
+#endif
+
 #if NET_MAX_SOCKETS < 1
 #error "NET_MAX_SOCKETS must be positive"
 #endif
@@ -94,6 +106,15 @@
 #endif
 #if NET_ARP_REQUEST_RETRIES < 1 || NET_ARP_WAIT_TICKS < 1
 #error "ARP resolution bounds must be positive"
+#endif
+#if NET_TCP_MSS < 64 || NET_TCP_MSS > NET_MAX_DATAGRAM
+#error "NET_TCP_MSS must fit a datagram payload"
+#endif
+#if NET_TCP_CONNECT_TIMEOUT < 1
+#error "NET_TCP_CONNECT_TIMEOUT must be positive"
+#endif
+#if NET_TCP_RX_QUEUE_LIMIT < 1
+#error "NET_TCP_RX_QUEUE_LIMIT must be positive"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */

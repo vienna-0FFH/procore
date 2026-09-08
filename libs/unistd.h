@@ -151,7 +151,9 @@ struct pollfd {
 /* Minimal IPv4 datagram ABI.  Ports use network byte order. */
 #define AF_INET             2
 #define SOCK_DGRAM          2
+#define SOCK_STREAM         1
 #define IPPROTO_UDP         17
+#define IPPROTO_TCP         6
 #define INADDR_ANY          0U
 #define INADDR_LOOPBACK     0x0100007FU
 

@@ -24,11 +24,24 @@ struct net_socket {
     int waiters;
     volatile int ref_count;
     volatile int descriptor_count;
+    int type;
+    int protocol;
     uint16_t port;
     uint32_t addr;
     bool bound;
     bool connected;
     struct sockaddr_in peer;
+    enum {
+        NET_TCP_CLOSED,
+        NET_TCP_SYN_SENT,
+        NET_TCP_ESTABLISHED,
+        NET_TCP_CLOSE_WAIT,
+    } tcp_state;
+    uint32_t tcp_snd_una;
+    uint32_t tcp_snd_nxt;
+    uint32_t tcp_rcv_nxt;
+    int connect_waiters;
+    bool tcp_eof;
     volatile bool closed;
 };
 

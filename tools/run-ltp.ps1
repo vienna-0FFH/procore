@@ -5,6 +5,7 @@ param(
     [string]$QemuMemory = '',
     [int]$QemuSmp = 0,
     [switch]$QemuUserNet,
+    [switch]$QemuHostHttp,
     [string]$QemuPath = '',
     [string]$TccSource = 'user/hello.c',
     [string]$TccName = 'hello',
@@ -46,6 +47,10 @@ $QemuHostUdpPort = if ($Config.QemuHostUdpPort) {
 $QemuGuestUdpPort = if ($Config.QemuGuestUdpPort) {
     [int]$Config.QemuGuestUdpPort
 } else { 9100 }
+$UseQemuHostHttp = $QemuHostHttp.IsPresent -or [bool]$Config.QemuHostHttp
+$QemuHostHttpPort = if ($Config.QemuHostHttpPort) {
+    [int]$Config.QemuHostHttpPort
+} else { 18080 }
 $Qemu = if (-not [string]::IsNullOrWhiteSpace($QemuPath)) {
     $QemuPath
 } elseif (-not [string]::IsNullOrWhiteSpace($env:UCORE_QEMU)) {
@@ -133,6 +138,7 @@ foreach ($Test in $Tests) {
     $qemuErr = Join-Path $LogDir "$Test-$stamp-qemu.err"
     $buildProcess = $null
     $qemuProcess = $null
+    $httpProcess = $null
     $buildOk = $false
     $qemuOk = $false
     $status = 'FAIL'
@@ -182,6 +188,18 @@ foreach ($Test in $Tests) {
             throw "build exit $buildExit"
         }
         $buildOk = $true
+
+        if ($UseQemuHostHttp -and $Test -eq 'httpget') {
+            $httpRoot = Join-Path $Project 'tools\http-test-root'
+            $httpProcess = Start-Process -FilePath 'python' `
+                -ArgumentList @('-m', 'http.server', "$QemuHostHttpPort",
+                                '--bind', '0.0.0.0') `
+                -WorkingDirectory $httpRoot -RedirectStandardOutput `
+                (Join-Path $LogDir "$Test-$stamp-http.out") `
+                -RedirectStandardError (Join-Path $LogDir "$Test-$stamp-http.err") `
+                -PassThru -WindowStyle Hidden
+            Start-Sleep -Milliseconds 250
+        }
 
         $qemuArgs = @(
             '-display', 'none', '-monitor', 'none', '-no-reboot', '-snapshot',
@@ -247,6 +265,7 @@ foreach ($Test in $Tests) {
         }
     } finally {
         Stop-ProcessTree $qemuProcess
+        Stop-ProcessTree $httpProcess
         Stop-ProcessTree $buildProcess
     }
 

@@ -1015,8 +1015,10 @@ file_socket_create(int domain, int type, int protocol) {
     struct file *file;
     int ret;
 
-    if (domain != AF_INET || type != SOCK_DGRAM ||
-        (protocol != 0 && protocol != IPPROTO_UDP)) {
+    if (domain != AF_INET ||
+        (type != SOCK_DGRAM && type != SOCK_STREAM) ||
+        (type == SOCK_DGRAM && protocol != 0 && protocol != IPPROTO_UDP) ||
+        (type == SOCK_STREAM && protocol != 0 && protocol != IPPROTO_TCP)) {
         return -E_INVAL;
     }
 

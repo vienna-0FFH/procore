@@ -6,6 +6,8 @@
     QemuUserNet = $false
     QemuHostUdpPort = 19100
     QemuGuestUdpPort = 9100
+    QemuHostHttp = $false
+    QemuHostHttpPort = 18080
     BuildTimeoutSeconds = 180
     QemuTimeoutSeconds = 45
 
