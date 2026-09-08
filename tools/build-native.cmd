@@ -13,5 +13,10 @@ if not exist "%BUILD_SCRIPT%" (
     exit /b 1
 )
 
-"%NATIVE_BASH%" --noprofile --norc "%BUILD_SCRIPT%" %*
+if "%~1"=="" (
+    rem Clear a stale test define so a plain build always boots the shell.
+    "%NATIVE_BASH%" --noprofile --norc "%BUILD_SCRIPT%" DEFS=
+) else (
+    "%NATIVE_BASH%" --noprofile --norc "%BUILD_SCRIPT%" %*
+)
 exit /b %errorlevel%
