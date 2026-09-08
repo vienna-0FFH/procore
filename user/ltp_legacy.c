@@ -7,6 +7,7 @@
 #include <ulib.h>
 #include <stdio.h>
 #include <file.h>
+#include <socket.h>
 #include <string.h>
 #include <unistd.h>
 #include <error.h>
@@ -96,6 +97,44 @@ check_file_descriptions(void) {
 }
 
 static void
+check_lseek_and_errors(void) {
+    char first[4];
+    int fd = open("/c4demo.c", O_RDONLY);
+    int duplicate;
+
+    check(fd >= 0, "lseek opens bundled source");
+    if (fd < 0) {
+        return;
+    }
+    check(read(fd, first, sizeof(first)) == (int)sizeof(first),
+          "lseek baseline read succeeds");
+    check(seek(fd, 0, LSEEK_SET) == 0,
+          "lseek resets the shared offset");
+    memset(first, 0, sizeof(first));
+    check(read(fd, first, sizeof(first)) == (int)sizeof(first) &&
+          first[0] == 'i', "lseek reads from requested offset");
+    duplicate = dup2(fd, 7);
+    check(duplicate == 7, "dup2 replaces requested descriptor");
+    if (duplicate == 7) {
+        close(duplicate);
+    }
+    close(fd);
+    check(close(-1) < 0, "close rejects invalid descriptor");
+    check(dup2(-1, 7) < 0, "dup2 rejects invalid source descriptor");
+}
+
+static void
+check_socket_create(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    check(fd >= 0, "socket creates UDP endpoint");
+    if (fd >= 0) {
+        check(close(fd) == 0, "socket descriptor closes cleanly");
+    }
+    check(socket(0, SOCK_DGRAM, 0) < 0,
+          "socket rejects unsupported domain");
+}
+
+static void
 check_cpu_affinity(void) {
     int cpu = getcpu();
     uint32_t mask = 0;
@@ -114,6 +153,8 @@ main(void) {
     check_process_identity();
     check_memory();
     check_file_descriptions();
+    check_lseek_and_errors();
+    check_socket_create();
     check_cpu_affinity();
     cprintf("legacy-ltp: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

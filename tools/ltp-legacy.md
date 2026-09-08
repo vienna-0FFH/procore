@@ -16,6 +16,7 @@ replacing Linux-only setup with uCore interfaces:
 | `brk01` | grow, touch, and shrink the uCore program break |
 | `mmap01`, `munmap01` | anonymous two-page mapping, writes, and unmap |
 | `open01`, `read01`, `dup201`, `lseek01` | read the bundled source and verify shared descriptor offset |
+| `close01`, `socket01` | invalid close/dup2 paths and UDP descriptor lifecycle |
 | `getcpu01`, `sched_setaffinity01` | query the uCore CPU and set/read the current task mask |
 
 The port deliberately omits `/proc/sys/kernel/pid_max`, symlink-loop cases,
@@ -29,6 +30,6 @@ Run only this adapted group with:
 & '.\tools\run-ltp.ps1' -Tests ltp_legacy
 ```
 
-The verified result is 15 checks, 0 failures, status 0 on four QEMU CPUs. The
+The verified result is 25 checks, 0 failures, status 0 on four QEMU CPUs. The
 normal configuration includes both `c4` and `ltp_legacy` in addition to the
 existing uCore compatibility tests.

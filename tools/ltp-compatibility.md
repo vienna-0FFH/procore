@@ -66,7 +66,7 @@ on the same four-vCPU topology before the complete thirteen-test run:
 | Test | Result | Detail |
 | --- | --- | --- |
 | `c4` | `PASS` | `/c4demo.c` compiled to bytecode and executed; status 0 |
-| `ltp_legacy` | `PASS` | 15 adapted checks, 0 failures; status 0 |
+| `ltp_legacy` | `PASS` | 25 adapted checks, 0 failures; status 0 |
 | `elfgen` | `PASS` | generated ELF32 executed and returned status 0 |
 
 Their implementation and provenance are documented in `tools/compiler-port.md`
