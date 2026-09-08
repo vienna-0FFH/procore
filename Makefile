@@ -292,6 +292,7 @@ $(call create_target,swap.img)
 SFSIMG		:= $(call totarget,sfs.img)
 SFSBINS		:=
 SFSROOT		:= disk0
+SFS_SOURCE_DIR	:= $(SFSROOT)/src
 
 # Runtime objects and headers consumed by TinyCC after uCore boots.
 TCC_SFS_BIN := $(SFSROOT)/bin/tcc
@@ -302,6 +303,11 @@ TCC_HEADER_TARGETS := $(addprefix $(SFSROOT)/tcc/include/,$(patsubst user/tcc/in
 TCC_UCORE_HEADER_SOURCES := $(wildcard user/libs/*.h libs/*.h)
 TCC_UCORE_HEADER_TARGETS := $(addprefix $(SFSROOT)/tcc/ucore/,$(notdir $(TCC_UCORE_HEADER_SOURCES)))
 TCC_ASSET_DIRS := $(sort $(patsubst %/,%,$(dir $(TCC_SFS_BIN) $(TCC_RUNTIME_TARGETS) $(TCC_HEADER_TARGETS) $(TCC_UCORE_HEADER_TARGETS))))
+
+# Keep the original user C sources in the bootable SFS image.  This is the
+# interactive source tree used by /bin/tcc from the uCore shell.
+USER_C_SOURCE_FILES := $(wildcard user/*.c)
+USER_C_SOURCE_TARGETS := $(addprefix $(SFS_SOURCE_DIR)/,$(notdir $(USER_C_SOURCE_FILES)))
 
 $(TCC_ASSET_DIRS):
 	@$(MKDIR) $@
@@ -338,7 +344,7 @@ C4_SOURCE_NAME	?= c4demo.c
 C4_SFS_SOURCE	:= $(SFSROOT)$(SLASH)$(C4_SOURCE_NAME)
 TCC_DEMO_SOURCE	?= user/tccdemo.csrc
 TCC_DEMO_SOURCE_NAME ?= tccdemo.c
-TCC_SFS_DEMO_SOURCE := $(SFSROOT)$(SLASH)$(TCC_DEMO_SOURCE_NAME)
+TCC_SFS_DEMO_SOURCE := $(SFS_SOURCE_DIR)$(SLASH)$(TCC_DEMO_SOURCE_NAME)
 TCC_ELF_NAME	?= tcc-program
 TCC_SFS_ELF	:= $(SFSROOT)$(SLASH)$(TCC_ELF_NAME)
 
@@ -356,7 +362,14 @@ $(C4_SFS_SOURCE): $(C4_SOURCE) | $(SFSROOT)
 
 SFSBINS += $(C4_SFS_SOURCE)
 
-$(TCC_SFS_DEMO_SOURCE): $(TCC_DEMO_SOURCE) | $(SFSROOT)
+define user_c_source_copy
+$(SFS_SOURCE_DIR)/$(notdir $(1)): $(1) | $(SFS_SOURCE_DIR)
+	@$(COPY) $$< $$@
+endef
+$(foreach p,$(USER_C_SOURCE_FILES),$(eval $(call user_c_source_copy,$(p))))
+SFSBINS += $(USER_C_SOURCE_TARGETS)
+
+$(TCC_SFS_DEMO_SOURCE): $(TCC_DEMO_SOURCE) | $(SFS_SOURCE_DIR)
 	@$(COPY) $< $@
 
 SFSBINS += $(TCC_SFS_DEMO_SOURCE)
@@ -369,6 +382,9 @@ SFSBINS += $(TCC_SFS_ELF)
 endif
 
 $(SFSROOT):
+	$(V)$(MKDIR) $@
+
+$(SFS_SOURCE_DIR): | $(SFSROOT)
 	$(V)$(MKDIR) $@
 
 $(SFSIMG): $(SFSROOT) $(SFSBINS) | $(call totarget,mksfs)

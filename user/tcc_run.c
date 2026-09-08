@@ -7,7 +7,7 @@
 int
 main(int argc, char **argv) {
     int child, status;
-    const char *source = argc > 1 ? argv[1] : "/tccdemo.c";
+    const char *source = argc > 1 ? argv[1] : "/src/tccdemo.c";
     const char *output = argc > 2 ? argv[2] : "/tcc-generated";
     const char *compile_argv[] = {
         "/bin/tcc", source, "-o", output, NULL

@@ -200,6 +200,9 @@ runit:
         if (argc != 2) {
             return -1;
         }
+        if ((ret = chdir(argv[1])) != 0) {
+            return ret;
+        }
         strcpy(shcwd, argv[1]);
         return 0;
     }
@@ -212,6 +215,13 @@ runit:
     }
     argv[argc] = NULL;
     return __exec(NULL, argv);
+}
+
+static bool
+is_cd_command(const char *cmd) {
+    while (*cmd == ' ' || *cmd == '\t') cmd++;
+    return strncmp(cmd, "cd", 2) == 0 &&
+           (cmd[2] == '\0' || cmd[2] == ' ' || cmd[2] == '\t');
 }
 
 int
@@ -234,6 +244,13 @@ main(int argc, char **argv) {
     char *buffer;
     while ((buffer = readline((interactive) ? "$ " : NULL)) != NULL) {
         shcwd[0] = '\0';
+        if (is_cd_command(buffer)) {
+            ret = runcmd(buffer);
+            if (ret != 0) {
+                printf("error: %d - %e\n", ret, ret);
+            }
+            continue;
+        }
         int pid;
         if ((pid = fork()) == 0) {
             ret = runcmd(buffer);
@@ -251,4 +268,3 @@ main(int argc, char **argv) {
     }
     return 0;
 }
-
