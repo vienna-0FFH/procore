@@ -1,0 +1,4 @@
+int main() {
+  printf("c4 dynamic compile pass: %d\n", 42);
+  return 0;
+}

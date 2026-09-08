@@ -18,6 +18,8 @@
         'nettest',
         'affinitytest',
         'schedtest',
-        'cowtest'
+        'cowtest',
+        'c4',
+        'ltp_legacy'
     )
 }

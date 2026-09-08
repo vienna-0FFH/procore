@@ -267,6 +267,12 @@ SFSIMG		:= $(call totarget,sfs.img)
 SFSBINS		:=
 SFSROOT		:= disk0
 
+# Source consumed by the in-OS c4 compiler test. Keep the source extension
+# outside CTYPE so it is copied as data, not linked as a second user program.
+C4_SOURCE		?= user/c4demo.csrc
+C4_SOURCE_NAME	?= c4demo.c
+C4_SFS_SOURCE	:= $(SFSROOT)$(SLASH)$(C4_SOURCE_NAME)
+
 define fscopy
 __fs_bin__ := $(2)$(SLASH)$(patsubst $(USER_PREFIX)%,%,$(basename $(notdir $(1))))
 SFSBINS += $$(__fs_bin__)
@@ -275,6 +281,11 @@ $$(__fs_bin__): $(1) | $$$$(dir $@)
 endef
 
 $(foreach p,$(USER_BINS),$(eval $(call fscopy,$(p),$(SFSROOT)$(SLASH))))
+
+$(C4_SFS_SOURCE): $(C4_SOURCE) | $(SFSROOT)
+	@$(COPY) $< $@
+
+SFSBINS += $(C4_SFS_SOURCE)
 
 $(SFSROOT):
 	$(V)$(MKDIR) $@
