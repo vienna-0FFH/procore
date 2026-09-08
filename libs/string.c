@@ -154,11 +154,30 @@ strncmp(const char *s1, const char *s2, size_t n) {
  * */
 char *
 strchr(const char *s, char c) {
+    while (1) {
+        if (*s == c) return (char *)s;
+        if (*s == '\0') return NULL;
+        s++;
+    }
+}
+
+char *
+strrchr(const char *s, int c) {
+    const char *last = NULL;
+    do {
+        if (*s == (char)c) last = s;
+    } while (*s++ != '\0');
+    return (char *)last;
+}
+
+char *
+strpbrk(const char *s, const char *accept) {
     while (*s != '\0') {
-        if (*s == c) {
-            return (char *)s;
+        const char *p;
+        for (p = accept; *p != '\0'; p++) {
+            if (*s == *p) return (char *)s;
         }
-        s ++;
+        s++;
     }
     return NULL;
 }
@@ -377,4 +396,3 @@ memcmp(const void *v1, const void *v2, size_t n) {
     }
     return 0;
 }
-

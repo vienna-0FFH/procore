@@ -133,9 +133,35 @@ UCFLAGS		+= $(addprefix -I,$(UINCLUDE))
 USER_BINS	:=
 
 $(call add_files_cc,$(call listf_cc,$(ULIBDIR)),ulibs,$(UCFLAGS))
-$(call add_files_cc,$(call listf_cc,$(USRCDIR)),uprog,$(UCFLAGS))
+TCC_USER_SOURCE := user/tcc.c
+USER_SOURCE_FILES := $(filter-out $(TCC_USER_SOURCE),$(call listf_cc,$(USRCDIR)))
+$(call add_files_cc,$(USER_SOURCE_FILES),uprog,$(UCFLAGS))
 
 UOBJS	:= $(call read_packet,ulibs libs)
+
+# TinyCC is one large translation unit and needs its own include path.  Keep
+# it outside USER_BINS so the ordinary user-program pattern does not try to
+# link it a second time.
+TCC_OBJ := $(OBJDIR)/tcc/tcc.o
+TCC_LIBTCC1_OBJ := $(OBJDIR)/tcc/libtcc1.o
+TCC_BIN := $(BINDIR)/tcc
+
+$(OBJDIR)/tcc:
+	@$(MKDIR) $@
+
+$(TCC_OBJ): $(TCC_USER_SOURCE) | $(OBJDIR)/tcc
+	@echo + cc $< TinyCC
+	$(V)$(CC) -Iuser/tcc/src -Iuser/tcc/include -Iuser/libs -Iuser/include -Ilibs $(CFLAGS) $(UCFLAGS) -c $< -o $@
+
+$(TCC_LIBTCC1_OBJ): user/tcc/src/libtcc1.c | $(OBJDIR)/tcc
+	@echo + cc $< libtcc1
+	$(V)$(CC) -fheinous-gnu-extensions -Iuser/tcc/src -Iuser/tcc/include -Iuser/libs -Iuser/include -Ilibs $(CFLAGS) $(UCFLAGS) -c $< -o $@
+
+$(TCC_BIN): $(TCC_OBJ) $(TCC_LIBTCC1_OBJ) $(UOBJS) target/native/compat/user.ld | $(BINDIR)
+	@echo + ld $@ TinyCC
+	$(V)$(LD) $(LDFLAGS) -T target/native/compat/user.ld -o $@ $(UOBJS) $(TCC_LIBTCC1_OBJ) $(TCC_OBJ)
+
+TARGETS += $(TCC_BIN)
 
 define uprog_ld
 __user_bin__ := $$(call ubinfile,$(1))
@@ -267,11 +293,54 @@ SFSIMG		:= $(call totarget,sfs.img)
 SFSBINS		:=
 SFSROOT		:= disk0
 
+# Runtime objects and headers consumed by TinyCC after uCore boots.
+TCC_SFS_BIN := $(SFSROOT)/bin/tcc
+TCC_RUNTIME_OBJS := $(UOBJS) $(TCC_LIBTCC1_OBJ)
+TCC_RUNTIME_TARGETS := $(addprefix $(SFSROOT)/tcc/lib/,$(notdir $(TCC_RUNTIME_OBJS)))
+TCC_HEADER_SOURCES := $(wildcard user/tcc/include/*.h user/tcc/include/sys/*.h)
+TCC_HEADER_TARGETS := $(addprefix $(SFSROOT)/tcc/include/,$(patsubst user/tcc/include/%,%,$(TCC_HEADER_SOURCES)))
+TCC_UCORE_HEADER_SOURCES := $(wildcard user/libs/*.h libs/*.h)
+TCC_UCORE_HEADER_TARGETS := $(addprefix $(SFSROOT)/tcc/ucore/,$(notdir $(TCC_UCORE_HEADER_SOURCES)))
+TCC_ASSET_DIRS := $(sort $(patsubst %/,%,$(dir $(TCC_SFS_BIN) $(TCC_RUNTIME_TARGETS) $(TCC_HEADER_TARGETS) $(TCC_UCORE_HEADER_TARGETS))))
+
+$(TCC_ASSET_DIRS):
+	@$(MKDIR) $@
+
+$(TCC_SFS_BIN): $(TCC_BIN) | $(SFSROOT)/bin
+	@$(COPY) $< $@
+SFSBINS += $(TCC_SFS_BIN)
+
+define tcc_runtime_copy
+$(SFSROOT)/tcc/lib/$(notdir $(1)): $(1) | $(SFSROOT)/tcc/lib
+	@$(COPY) $$< $$@
+endef
+$(foreach p,$(TCC_RUNTIME_OBJS),$(eval $(call tcc_runtime_copy,$(p))))
+SFSBINS += $(TCC_RUNTIME_TARGETS)
+
+define tcc_header_copy
+$(SFSROOT)/tcc/include/$(patsubst user/tcc/include/%,%,$(1)): $(1) | $(TCC_ASSET_DIRS)
+	@$(COPY) $$< $$@
+endef
+$(foreach p,$(TCC_HEADER_SOURCES),$(eval $(call tcc_header_copy,$(p))))
+SFSBINS += $(TCC_HEADER_TARGETS)
+
+define tcc_ucore_header_copy
+$(SFSROOT)/tcc/ucore/$(notdir $(1)): $(1) | $(SFSROOT)/tcc/ucore
+	@$(COPY) $$< $$@
+endef
+$(foreach p,$(TCC_UCORE_HEADER_SOURCES),$(eval $(call tcc_ucore_header_copy,$(p))))
+SFSBINS += $(TCC_UCORE_HEADER_TARGETS)
+
 # Source consumed by the in-OS c4 compiler test. Keep the source extension
 # outside CTYPE so it is copied as data, not linked as a second user program.
 C4_SOURCE		?= user/c4demo.csrc
 C4_SOURCE_NAME	?= c4demo.c
 C4_SFS_SOURCE	:= $(SFSROOT)$(SLASH)$(C4_SOURCE_NAME)
+TCC_DEMO_SOURCE	?= user/tccdemo.csrc
+TCC_DEMO_SOURCE_NAME ?= tccdemo.c
+TCC_SFS_DEMO_SOURCE := $(SFSROOT)$(SLASH)$(TCC_DEMO_SOURCE_NAME)
+TCC_ELF_NAME	?= tcc-program
+TCC_SFS_ELF	:= $(SFSROOT)$(SLASH)$(TCC_ELF_NAME)
 
 define fscopy
 __fs_bin__ := $(2)$(SLASH)$(patsubst $(USER_PREFIX)%,%,$(basename $(notdir $(1))))
@@ -286,6 +355,18 @@ $(C4_SFS_SOURCE): $(C4_SOURCE) | $(SFSROOT)
 	@$(COPY) $< $@
 
 SFSBINS += $(C4_SFS_SOURCE)
+
+$(TCC_SFS_DEMO_SOURCE): $(TCC_DEMO_SOURCE) | $(SFSROOT)
+	@$(COPY) $< $@
+
+SFSBINS += $(TCC_SFS_DEMO_SOURCE)
+
+ifneq ($(strip $(TCC_ELF)),)
+$(TCC_SFS_ELF): $(TCC_ELF) | $(SFSROOT)
+	@$(COPY) $< $@
+
+SFSBINS += $(TCC_SFS_ELF)
+endif
 
 $(SFSROOT):
 	$(V)$(MKDIR) $@

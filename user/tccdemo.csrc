@@ -1,0 +1,21 @@
+#include <ulib.h>
+#include <stdio.h>
+#include <assert.h>
+
+typedef struct {
+    int value;
+    char tag[4];
+} record_t;
+
+static int
+record_score(const record_t *record) {
+    return record->value + record->tag[1];
+}
+
+int
+main(void) {
+    record_t record = { 40, { 'a', 'b', 'c', '\0' } };
+    assert(record_score(&record) == 138);
+    cprintf("tcc struct/typedef pass: %d\n", record_score(&record));
+    return 0;
+}

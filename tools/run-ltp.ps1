@@ -4,7 +4,12 @@ param(
     [int]$QemuTimeoutSeconds = 0,
     [string]$QemuMemory = '',
     [int]$QemuSmp = 0,
-    [string]$QemuPath = ''
+    [string]$QemuPath = '',
+    [string]$TccSource = 'user/hello.c',
+    [string]$TccName = 'hello',
+    [string]$TccInOsSource = '',
+    [string]$TccInOsName = '',
+    [string]$TinyCcWslPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +49,20 @@ $Qemu = if (-not [string]::IsNullOrWhiteSpace($QemuPath)) {
 }
 $NativeBin = Join-Path $Project 'target\native\bin'
 $LogDir = Join-Path $Project 'target\native\ltp'
+$TccElfRelative = ''
+
+if ($Tests -contains 'tcc_elf') {
+    $tccBuilder = Join-Path $Project 'tools\build-tcc-elf.ps1'
+    $tccArgs = @('-Source', $TccSource, '-Name', $TccName, '-BuildRuntime')
+    if (-not [string]::IsNullOrWhiteSpace($TinyCcWslPath)) {
+        $tccArgs += @('-TinyCcWslPath', $TinyCcWslPath)
+    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tccBuilder @tccArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "TinyCC ELF preparation failed: $LASTEXITCODE"
+    }
+    $TccElfRelative = "target/native/tcc/$TccName-tcc.elf"
+}
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -91,8 +110,18 @@ foreach ($Test in $Tests) {
     $detail = ''
 
     try {
+        $buildArgs = @("DEFS+=-DTEST=$Test")
+        if ($Test -eq 'tcc_elf') {
+            $buildArgs += @("TCC_ELF=$TccElfRelative", 'TCC_ELF_NAME=tcc-program')
+        }
+        if ($Test -eq 'tcc_run' -and -not [string]::IsNullOrWhiteSpace($TccInOsSource)) {
+            $buildArgs += @("TCC_DEMO_SOURCE=$TccInOsSource")
+            if (-not [string]::IsNullOrWhiteSpace($TccInOsName)) {
+                $buildArgs += @("TCC_DEMO_SOURCE_NAME=$TccInOsName")
+            }
+        }
         $buildProcess = Start-Process -FilePath $Build `
-            -ArgumentList @("DEFS+=-DTEST=$Test") `
+            -ArgumentList $buildArgs `
             -RedirectStandardOutput $buildLog -RedirectStandardError $buildErr `
             -PassThru -WindowStyle Hidden
         $buildDeadline = (Get-Date).AddSeconds($BuildTimeoutSeconds)

@@ -16,6 +16,9 @@ int strcmp(const char *s1, const char *s2);
 int strncmp(const char *s1, const char *s2, size_t n);
 
 char *strchr(const char *s, char c);
+char *strrchr(const char *s, int c);
+char *strpbrk(const char *s, const char *accept);
+char *strdup(const char *src);
 char *strfind(const char *s, char c);
 long strtol(const char *s, char **endptr, int base);
 
@@ -25,4 +28,3 @@ void *memcpy(void *dst, const void *src, size_t n);
 int memcmp(const void *v1, const void *v2, size_t n);
 
 #endif /* !__LIBS_STRING_H__ */
-

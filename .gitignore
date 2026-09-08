@@ -20,3 +20,5 @@ target/native/*.bin
 target/native/*.err
 target/native/reference-kernel.elf
 target/native/ltp/
+target/native/tcc/
+target/native/tcc-src/

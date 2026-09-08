@@ -32,6 +32,11 @@ seek(int fd, off_t pos, int whence) {
 }
 
 int
+lseek(int fd, off_t pos, int whence) {
+    return seek(fd, pos, whence);
+}
+
+int
 fstat(int fd, struct stat *stat) {
     return sys_fstat(fd, stat);
 }

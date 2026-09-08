@@ -9,6 +9,7 @@ int cprintf(const char *fmt, ...);
 int vcprintf(const char *fmt, va_list ap);
 void cputchar(int c);
 int cputs(const char *str);
+int printf(const char *fmt, ...);
 int getchar(void);
 
 /* kern/libs/readline.c */
@@ -21,4 +22,3 @@ int snprintf(char *str, size_t size, const char *fmt, ...);
 int vsnprintf(char *str, size_t size, const char *fmt, va_list ap);
 
 #endif /* !__LIBS_STDIO_H__ */
-

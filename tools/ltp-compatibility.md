@@ -47,6 +47,8 @@ The current initial subset maps these LTP themes:
 | `c4` | dynamic compiler/runtime | load C source from SFS, compile to bytecode, execute |
 | `ltp_legacy` | legacy LTP syscall intent | adapted 20210927 process, memory, VFS, and CPU checks |
 | `elfgen` | native compiler backend contract | generate an ELF32 file in uCore and exec it |
+| `tcc_elf` | hosted TinyCC native path | compile an original user source to ELF32, then execute it in uCore |
+| `tcc_run` | in-uCore TinyCC | compile an SFS C source to a static ELF from inside uCore, then execute it |
 
 The latest complete uCore run used the configured four-vCPU QEMU topology
 (`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All thirteen
