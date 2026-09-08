@@ -172,12 +172,15 @@ foreach ($Test in $Tests) {
             Get-Content -LiteralPath $serialLog -Raw -ErrorAction SilentlyContinue
         } else { '' }
         $statusMatch = [regex]::Match($serial, 'user-test-result: status=([^\r\n]+)')
-        if ($statusMatch.Success -and $statusMatch.Groups[1].Value -eq '0') {
+        $statusValue = if ($statusMatch.Success) {
+            $statusMatch.Groups[1].Value.TrimEnd('.')
+        } else { '' }
+        if ($statusMatch.Success -and $statusValue -eq '0') {
             $status = 'PASS'
             $detail = 'status=0'
         } elseif ($statusMatch.Success) {
             $status = 'FAIL'
-            $detail = "status=$($statusMatch.Groups[1].Value)"
+            $detail = "status=$statusValue"
         } elseif ($serial -match 'Triple fault|kernel panic at|user panic at|killed by kernel') {
             $status = 'FAIL'
             $detail = 'panic/fault before result marker'

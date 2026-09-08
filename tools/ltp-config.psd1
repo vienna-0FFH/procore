@@ -20,6 +20,7 @@
         'schedtest',
         'cowtest',
         'c4',
+        'tcc_run',
         'ltp_legacy',
         'elfgen'
     )

@@ -51,30 +51,30 @@ The current initial subset maps these LTP themes:
 | `tcc_run` | in-uCore TinyCC | compile an SFS C source to a static ELF from inside uCore, then execute it |
 
 The latest complete uCore run used the configured four-vCPU QEMU topology
-(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All thirteen
-configured programs built successfully, reached their result marker, and
-returned status 0:
+(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All
+fourteen configured programs built successfully, reached their result marker,
+and returned status 0:
 
 | uCore runner result | Tests |
 | --- | --- |
-| `PASS` (13/13) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest`, `c4`, `ltp_legacy`, `elfgen` |
+| `PASS` (14/14) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest`, `c4`, `tcc_run`, `ltp_legacy`, `elfgen` |
 
 The machine-readable record is `target/native/ltp/summary.csv`; serial logs are
 kept beside it. These are uCore/QEMU results, not upstream Linux LTP results.
 
-The compiler, legacy-port, and native ELF additions were also run individually
-on the same four-vCPU topology before the complete thirteen-test run:
+The compiler, legacy-port, native ELF, and in-uCore TinyCC additions were also
+run individually on the same four-vCPU topology:
 
 | Test | Result | Detail |
 | --- | --- | --- |
 | `c4` | `PASS` | `/c4demo.c` compiled to bytecode and executed; status 0 |
+| `tcc_run` | `PASS` | in-uCore TinyCC compiled and executed `struct/typedef`, `mmaptest`, `clonetest`, `chdirtest`, `vfstest`, `cowtest`, `nettest`, `affinitytest`, `schedtest`, `fdsharetest`, `forktree`, `exit`, `sleepkill`, `priority`, `matrix`, `ltp_legacy`, `forktest`, `sleep`, `yield`, `cowstress`, `netexternal_tx`, `pgdir`, `ls`, and `spin` sources; status 0 |
 | `ltp_legacy` | `PASS` | 25 adapted checks, 0 failures; status 0 |
 | `elfgen` | `PASS` | generated ELF32 executed and returned status 0 |
 
 Their implementation and provenance are documented in `tools/compiler-port.md`
-and `tools/ltp-legacy.md`. The complete configured run now includes all
-thirteen entries from `tools/ltp-config.psd1` and is recorded as `PASS (13/13)`
-above.
+and `tools/ltp-legacy.md`. The configured list contains all fourteen entries
+shown above.
 
 Upstream cases that depend on Linux-only facilities such as `/proc`, signals,
 ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
