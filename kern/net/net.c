@@ -253,6 +253,32 @@ net_tcp_send_segment(struct net_socket *socket, uint8_t flags,
 }
 
 static void
+net_tcp_record_tx(struct net_socket *socket, uint8_t flags,
+                  uint32_t sequence, uint32_t acknowledgement,
+                  const void *payload, size_t payload_length) {
+    uint8_t *copy = NULL;
+    if (payload_length != 0) {
+        copy = kmalloc(payload_length);
+        if (copy == NULL) {
+            return;
+        }
+        memcpy(copy, payload, payload_length);
+    }
+    spin_lock(&socket->lock);
+    if (socket->tcp_last_tx_payload != NULL) {
+        kfree(socket->tcp_last_tx_payload);
+    }
+    socket->tcp_last_tx_payload = copy;
+    socket->tcp_last_tx_len = payload_length;
+    socket->tcp_last_tx_seq = sequence;
+    socket->tcp_last_tx_ack = acknowledgement;
+    socket->tcp_last_tx_flags = flags;
+    socket->tcp_last_tx_tick = ticks;
+    socket->tcp_retry_count = 0;
+    spin_unlock(&socket->lock);
+}
+
+static void
 net_send_arp_reply(const struct net_arp_packet *request,
                    const uint8_t destination_mac[NET_ETH_ADDR_LEN]) {
     uint8_t frame[NET_FRAME_CAPACITY];
@@ -440,6 +466,11 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
         socket->tcp_rcv_nxt = sequence + 1;
         socket->tcp_snd_una = acknowledgement;
         socket->tcp_state = NET_TCP_ESTABLISHED;
+        if (socket->tcp_last_tx_payload != NULL) {
+            kfree(socket->tcp_last_tx_payload);
+            socket->tcp_last_tx_payload = NULL;
+        }
+        socket->tcp_last_tx_len = 0;
         send_ack = 1;
     }
     else if (!socket->closed &&
@@ -455,6 +486,24 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
                 acknowledgement > socket->tcp_snd_una &&
                 acknowledgement <= socket->tcp_snd_nxt) {
                 socket->tcp_snd_una = acknowledgement;
+                {
+                    uint32_t end = socket->tcp_last_tx_seq +
+                        (uint32_t)socket->tcp_last_tx_len +
+                        (((socket->tcp_last_tx_flags &
+                           (NET_TCP_SYN | NET_TCP_FIN)) != 0) ? 1U : 0U);
+                    if (socket->tcp_last_tx_len != 0 ||
+                        (socket->tcp_last_tx_flags &
+                         (NET_TCP_SYN | NET_TCP_FIN)) != 0) {
+                        if (acknowledgement >= end) {
+                            if (socket->tcp_last_tx_payload != NULL) {
+                                kfree(socket->tcp_last_tx_payload);
+                                socket->tcp_last_tx_payload = NULL;
+                            }
+                            socket->tcp_last_tx_len = 0;
+                            socket->tcp_retry_count = 0;
+                        }
+                    }
+                }
             }
             if (sequence == socket->tcp_rcv_nxt && payload_length != 0) {
                 socket->tcp_rcv_nxt += (uint32_t)payload_length;
@@ -538,6 +587,76 @@ net_init(void) {
     cprintf("net: IPv4 UDP and active TCP client ready\n");
 }
 
+static void
+net_tcp_retransmit(void) {
+    struct net_socket *sockets[NET_MAX_SOCKETS];
+    list_entry_t *entry;
+    size_t count = 0, i;
+
+    spin_lock(&net_socket_lock);
+    entry = &net_socket_list;
+    while ((entry = list_next(entry)) != &net_socket_list &&
+           count < NET_MAX_SOCKETS) {
+        struct net_socket *socket = to_struct(entry, struct net_socket, link);
+        if (socket->type == SOCK_STREAM) {
+            net_socket_get(socket);
+            sockets[count++] = socket;
+        }
+    }
+    spin_unlock(&net_socket_lock);
+
+    for (i = 0; i < count; i++) {
+        struct net_socket *socket = sockets[i];
+        uint8_t flags = 0;
+        uint8_t *payload = NULL;
+        size_t payload_length = 0;
+        uint32_t sequence = 0, acknowledgement = 0;
+        bool retry = 0;
+        spin_lock(&socket->lock);
+        if (!socket->closed && socket->tcp_last_tx_flags != 0 &&
+            (socket->tcp_state == NET_TCP_SYN_SENT ||
+             socket->tcp_state == NET_TCP_ESTABLISHED) &&
+            (size_t)(ticks - socket->tcp_last_tx_tick) >=
+                NET_TCP_RETRY_TICKS) {
+            if (socket->tcp_retry_count >= NET_TCP_RETRY_LIMIT) {
+                if (socket->tcp_state == NET_TCP_SYN_SENT) {
+                    socket->tcp_state = NET_TCP_CLOSED;
+                    socket->connected = 0;
+                }
+                socket->tcp_last_tx_flags = 0;
+            }
+            else {
+                flags = socket->tcp_last_tx_flags;
+                sequence = socket->tcp_last_tx_seq;
+                acknowledgement = socket->tcp_last_tx_ack;
+                payload_length = socket->tcp_last_tx_len;
+                if (payload_length != 0) {
+                    payload = kmalloc(payload_length);
+                    if (payload != NULL) {
+                        memcpy(payload, socket->tcp_last_tx_payload,
+                               payload_length);
+                    }
+                }
+                if (payload_length == 0 || payload != NULL) {
+                    socket->tcp_retry_count++;
+                    socket->tcp_last_tx_tick = ticks;
+                    retry = 1;
+                }
+            }
+        }
+        spin_unlock(&socket->lock);
+        if (retry) {
+            (void)net_tcp_send_segment(socket, flags, sequence,
+                                       acknowledgement, payload,
+                                       payload_length);
+        }
+        if (payload != NULL) {
+            kfree(payload);
+        }
+        net_socket_put(socket);
+    }
+}
+
 void
 net_poll(void) {
     uint8_t frame[NET_FRAME_CAPACITY];
@@ -554,6 +673,7 @@ net_poll(void) {
         }
         net_receive_frame(frame, (size_t)length);
     }
+    net_tcp_retransmit();
 }
 
 struct net_socket *
@@ -591,6 +711,13 @@ net_socket_create(int domain, int type, int protocol) {
     socket->tcp_rcv_nxt = 0;
     socket->connect_waiters = 0;
     socket->tcp_eof = 0;
+    socket->tcp_last_tx_len = 0;
+    socket->tcp_last_tx_seq = 0;
+    socket->tcp_last_tx_ack = 0;
+    socket->tcp_last_tx_flags = 0;
+    socket->tcp_last_tx_tick = 0;
+    socket->tcp_retry_count = 0;
+    socket->tcp_last_tx_payload = NULL;
     socket->closed = 0;
 
     spin_lock(&net_socket_lock);
@@ -661,6 +788,9 @@ net_socket_put(struct net_socket *socket) {
     }
     socket->rx_count = 0;
     spin_unlock(&socket->lock);
+    if (socket->tcp_last_tx_payload != NULL) {
+        kfree(socket->tcp_last_tx_payload);
+    }
     kfree(socket);
 }
 
@@ -756,6 +886,7 @@ net_socket_connect(struct net_socket *socket,
             spin_unlock(&socket->lock);
             return ret;
         }
+        net_tcp_record_tx(socket, NET_TCP_SYN, sequence, 0, NULL, 0);
         start_tick = ticks;
         while ((size_t)(ticks - start_tick) < NET_TCP_CONNECT_TIMEOUT) {
             enum { WAITING, CONNECTED, FAILED } state;
@@ -969,6 +1100,9 @@ net_socket_send(struct net_socket *socket, const void *data, size_t length) {
                                      chunk) < 0) {
                 return offset != 0 ? (int)offset : -E_NA_DEV;
             }
+            net_tcp_record_tx(socket, NET_TCP_ACK | NET_TCP_PSH,
+                              sequence, acknowledgement,
+                              (const uint8_t *)data + offset, chunk);
             offset += chunk;
         }
         return (int)offset;

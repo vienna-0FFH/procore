@@ -42,6 +42,13 @@ struct net_socket {
     uint32_t tcp_rcv_nxt;
     int connect_waiters;
     bool tcp_eof;
+    size_t tcp_last_tx_len;
+    uint32_t tcp_last_tx_seq;
+    uint32_t tcp_last_tx_ack;
+    uint8_t tcp_last_tx_flags;
+    size_t tcp_last_tx_tick;
+    unsigned int tcp_retry_count;
+    uint8_t *tcp_last_tx_payload;
     volatile bool closed;
 };
 

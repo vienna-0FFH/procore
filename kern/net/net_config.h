@@ -80,6 +80,14 @@
 #define NET_TCP_RX_QUEUE_LIMIT       32U
 #endif
 
+#ifndef NET_TCP_RETRY_TICKS
+#define NET_TCP_RETRY_TICKS           100U
+#endif
+
+#ifndef NET_TCP_RETRY_LIMIT
+#define NET_TCP_RETRY_LIMIT           3U
+#endif
+
 #if NET_MAX_SOCKETS < 1
 #error "NET_MAX_SOCKETS must be positive"
 #endif
@@ -115,6 +123,9 @@
 #endif
 #if NET_TCP_RX_QUEUE_LIMIT < 1
 #error "NET_TCP_RX_QUEUE_LIMIT must be positive"
+#endif
+#if NET_TCP_RETRY_TICKS < 1 || NET_TCP_RETRY_LIMIT < 1
+#error "TCP retry policy must be positive"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */
