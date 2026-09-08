@@ -1,10 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 // c4.c - C in four functions
 
 // char, int, and pointer types
 // if, while, return, and expression statements
 // just enough features to allow self-compilation and a bit more
 
-// Written by Robert Swierczek
+// Written by Robert Swierczek; uCore port maintained in this tree.
+// Original source: https://github.com/rswier/c4
 
 /*
  * uCore port of c4 (Robert Swierczek). The original VM used 64-bit host
@@ -567,4 +569,3 @@ int main(int argc, char **argv)
     else { printf("unknown instruction = %d! cycle = %d\n", i, cycle); return -1; }
   }
 }
-

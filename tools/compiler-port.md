@@ -8,6 +8,10 @@ the original project is available at `https://github.com/rswier/c4`. The port
 keeps the original parser and VM, removes its 64-bit host-width assumption, and
 replaces host libc calls with the uCore user ABI.
 
+The port carries an SPDX `GPL-2.0-only` header and preserves the original
+attribution. Distribution of this derivative must remain compatible with that
+license.
+
 The compiler is built as an ordinary uCore 32-bit ELF user program. At runtime
 it reads `/c4demo.c` from SFS, allocates its symbol/code/data/VM areas through
 the uCore `brk` syscall, translates the source to bytecode, and executes the
