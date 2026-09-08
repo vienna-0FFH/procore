@@ -128,6 +128,19 @@ function Send-HostUdpProbe([int]$Port) {
     }
 }
 
+function Wait-HostTcpPort([int]$Port, [int]$TimeoutMilliseconds) {
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMilliseconds)
+    while ((Get-Date) -lt $deadline) {
+        $listener = Get-NetTCPConnection -LocalPort $Port -State Listen `
+            -ErrorAction SilentlyContinue
+        if ($null -ne $listener) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
 $results = @()
 foreach ($Test in $Tests) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -198,7 +211,9 @@ foreach ($Test in $Tests) {
                 (Join-Path $LogDir "$Test-$stamp-http.out") `
                 -RedirectStandardError (Join-Path $LogDir "$Test-$stamp-http.err") `
                 -PassThru -WindowStyle Hidden
-            Start-Sleep -Milliseconds 250
+            if (-not (Wait-HostTcpPort $QemuHostHttpPort 5000)) {
+                throw "host HTTP server did not listen on port $QemuHostHttpPort"
+            }
         }
 
         $qemuArgs = @(
