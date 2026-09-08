@@ -266,3 +266,8 @@ int
 sys_pipe(int fd[2]) {
     return syscall1(SYS_pipe, (uintptr_t)fd);
 }
+
+int
+sys_pipe2(int fd[2], uint32_t flags) {
+    return syscall2(SYS_pipe2, (uintptr_t)fd, flags);
+}

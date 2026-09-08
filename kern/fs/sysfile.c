@@ -350,6 +350,16 @@ sysfile_pipe(int *fd_store) {
 }
 
 int
+sysfile_pipe2(int *fd_store, uint32_t flags) {
+    /* O_NONBLOCK is introduced with fcntl; reject unknown pipe flags rather
+     * than silently changing blocking semantics. */
+    if (flags != 0) {
+        return -E_INVAL;
+    }
+    return sysfile_pipe(fd_store);
+}
+
+int
 sysfile_mkfifo(const char *__name, uint32_t open_flags) {
     return -E_UNIMP;
 }

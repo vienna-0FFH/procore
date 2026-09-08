@@ -57,6 +57,7 @@
 #define SYS_unlink          133
 #define SYS_rename          134
 #define SYS_pipe            135
+#define SYS_pipe2           136
 /* OLNY FOR core */
 #define SYS_lab6_set_priority 255
 

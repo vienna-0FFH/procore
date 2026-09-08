@@ -51,6 +51,9 @@ main(void) {
     assert(close(fds[0]) == 0);
     assert(write(fds[1], small, sizeof(small)) == -E_PIPE);
     assert(close(fds[1]) == 0);
+    assert(pipe2(fds, 1) == -E_INVAL);
+    assert(pipe2(fds, 0) == 0);
+    assert(close(fds[0]) == 0 && close(fds[1]) == 0);
     cprintf("pipe blocking, EOF, fork, and close semantics test pass.\n");
     return 0;
 }

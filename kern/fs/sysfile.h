@@ -22,7 +22,7 @@ int sysfile_getcwd(char *buf, size_t len);                      // get current w
 int sysfile_getdirentry(int fd, struct dirent *direntp);        // get the file entry in DIR 
 int sysfile_dup(int fd1, int fd2);                              // duplicate file
 int sysfile_pipe(int *fd_store);                                // build PIPE   
+int sysfile_pipe2(int *fd_store, uint32_t flags);
 int sysfile_mkfifo(const char *name, uint32_t open_flags);      // build named PIPE
 
 #endif /* !__KERN_FS_SYSFILE_H__ */
-

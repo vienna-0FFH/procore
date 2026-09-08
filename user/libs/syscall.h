@@ -52,6 +52,7 @@ int sys_getcwd(char *buffer, size_t len);
 int sys_getdirentry(int fd, struct dirent *dirent);
 int sys_dup(int fd1, int fd2);
 int sys_pipe(int fd[2]);
+int sys_pipe2(int fd[2], uint32_t flags);
 void sys_lab6_set_priority(uint32_t priority); //compatibility priority API
 
 
