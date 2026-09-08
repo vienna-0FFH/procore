@@ -220,6 +220,9 @@ KSRCDIR		+= kern/init \
 KCFLAGS		+= $(addprefix -I,$(KINCLUDE))
 # Optional platform overrides, e.g. SMP_DEFS+=-DSMP_MAX_CPUS=4.
 KCFLAGS		+= $(SMP_DEFS)
+# Subsystem policy overrides, e.g. FS_DEFS+=-DFS_PIPE_CAPACITY=8192
+# and NET_DEFS+=-DNET_MAX_SOCKETS=128.
+KCFLAGS		+= $(FS_DEFS) $(NET_DEFS)
 
 $(call add_files_cc,$(call listf_cc,$(KSRCDIR)),kernel,$(KCFLAGS))
 

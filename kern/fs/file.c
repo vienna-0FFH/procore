@@ -14,12 +14,33 @@
 #include <sem.h>
 #include <net.h>
 #include <kmalloc.h>
+#include <fs_config.h>
 
 #define testfd(fd)              ((fd) >= 0 && (fd) < FILES_STRUCT_NENTRY)
 
 enum open_file_kind {
     OPEN_FILE_INODE,
     OPEN_FILE_SOCKET,
+    OPEN_FILE_PIPE,
+};
+
+/* A pipe is a byte stream shared by one read description and one write
+ * description.  Descriptor duplication changes the endpoint counters, while
+ * the open-file description itself keeps the pipe alive across in-flight
+ * reads/writes and forked descriptor tables. */
+struct pipe {
+    spinlock_t lock;
+    semaphore_t read_sem;
+    semaphore_t write_sem;
+    uint8_t *buffer;
+    size_t head;
+    size_t tail;
+    size_t count;
+    int readers;
+    int writers;
+    int read_waiters;
+    int write_waiters;
+    volatile int ref_count;
 };
 
 /*
@@ -38,11 +59,101 @@ struct open_file {
     union {
         struct inode *node;
         struct net_socket *socket;
+        struct pipe *pipe;
     } object;
     semaphore_t operation_sem;
 };
 
 void open_file_put(struct open_file *description);
+
+static void
+pipe_wake_readers(struct pipe *pipe, bool all) {
+    int waiters;
+    if (pipe == NULL) {
+        return;
+    }
+    spin_lock(&pipe->lock);
+    waiters = pipe->read_waiters;
+    if (!all && waiters > 0) {
+        waiters = 1;
+    }
+    if (waiters > pipe->read_waiters) {
+        waiters = pipe->read_waiters;
+    }
+    pipe->read_waiters -= waiters;
+    spin_unlock(&pipe->lock);
+    while (waiters-- > 0) {
+        up(&pipe->read_sem);
+    }
+}
+
+static void
+pipe_wake_writers(struct pipe *pipe, bool all) {
+    int waiters;
+    if (pipe == NULL) {
+        return;
+    }
+    spin_lock(&pipe->lock);
+    waiters = pipe->write_waiters;
+    if (!all && waiters > 0) {
+        waiters = 1;
+    }
+    if (waiters > pipe->write_waiters) {
+        waiters = pipe->write_waiters;
+    }
+    pipe->write_waiters -= waiters;
+    spin_unlock(&pipe->lock);
+    while (waiters-- > 0) {
+        up(&pipe->write_sem);
+    }
+}
+
+static void
+pipe_endpoint_close(struct pipe *pipe, bool readable, bool writable) {
+    bool wake_readers = 0, wake_writers = 0;
+    if (pipe == NULL) {
+        return;
+    }
+    spin_lock(&pipe->lock);
+    if (readable && pipe->readers > 0) {
+        pipe->readers--;
+        wake_writers = pipe->readers == 0;
+    }
+    if (writable && pipe->writers > 0) {
+        pipe->writers--;
+        wake_readers = pipe->writers == 0;
+    }
+    spin_unlock(&pipe->lock);
+    if (wake_readers) {
+        pipe_wake_readers(pipe, 1);
+    }
+    if (wake_writers) {
+        pipe_wake_writers(pipe, 1);
+    }
+}
+
+static void
+pipe_endpoint_open(struct pipe *pipe, bool readable, bool writable) {
+    if (pipe == NULL) {
+        return;
+    }
+    spin_lock(&pipe->lock);
+    if (readable) {
+        pipe->readers++;
+    }
+    if (writable) {
+        pipe->writers++;
+    }
+    spin_unlock(&pipe->lock);
+}
+
+static void
+pipe_put(struct pipe *pipe) {
+    if (pipe != NULL && atomic_dec_return(&pipe->ref_count) == 0) {
+        kfree(pipe->buffer);
+        kfree(pipe);
+    }
+}
 
 static struct files_struct *
 current_files(void) {
@@ -81,6 +192,10 @@ open_file_get_descriptor(struct open_file *description) {
     open_file_get(description);
     assert(description->descriptor_count > 0);
     assert(atomic_inc_return(&description->descriptor_count) > 1);
+    if (description->kind == OPEN_FILE_PIPE) {
+        pipe_endpoint_open(description->object.pipe,
+                           description->readable, description->writable);
+    }
 }
 
 static void
@@ -91,6 +206,10 @@ open_file_drop_descriptor(struct open_file *description) {
     assert(descriptors >= 0);
     if (descriptors == 0 && description->kind == OPEN_FILE_SOCKET) {
         net_socket_close_descriptor(description->object.socket);
+    }
+    else if (description->kind == OPEN_FILE_PIPE) {
+        pipe_endpoint_close(description->object.pipe,
+                             description->readable, description->writable);
     }
 }
 
@@ -108,6 +227,9 @@ open_file_put(struct open_file *description) {
     assert(description->descriptor_count == 0);
     if (description->kind == OPEN_FILE_SOCKET) {
         net_socket_put(description->object.socket);
+    }
+    else if (description->kind == OPEN_FILE_PIPE) {
+        pipe_put(description->object.pipe);
     }
     else {
         vfs_close(description->object.node);
@@ -336,6 +458,189 @@ regular_file_acquire(int fd, bool readable, bool writable,
     return 0;
 }
 
+static struct pipe *
+pipe_create(void) {
+    struct pipe *pipe = kmalloc(sizeof(*pipe));
+    if (pipe == NULL) {
+        return NULL;
+    }
+    pipe->buffer = kmalloc(FS_PIPE_CAPACITY);
+    if (pipe->buffer == NULL) {
+        kfree(pipe);
+        return NULL;
+    }
+    spin_init(&pipe->lock);
+    sem_init(&pipe->read_sem, 0);
+    sem_init(&pipe->write_sem, 0);
+    pipe->head = pipe->tail = pipe->count = 0;
+    pipe->readers = pipe->writers = 0;
+    pipe->read_waiters = pipe->write_waiters = 0;
+    pipe->ref_count = 1;             /* temporary creator reference */
+    return pipe;
+}
+
+static void
+pipe_get(struct pipe *pipe) {
+    assert(pipe != NULL && pipe->ref_count > 0);
+    atomic_inc_return(&pipe->ref_count);
+}
+
+static int
+pipe_read(struct pipe *pipe, void *base, size_t len) {
+    size_t copied;
+    if (pipe == NULL || base == NULL || len == 0) {
+        return len == 0 ? 0 : -E_INVAL;
+    }
+    for (;;) {
+        spin_lock(&pipe->lock);
+        if (pipe->count != 0) {
+            copied = len < pipe->count ? len : pipe->count;
+            {
+                size_t first = FS_PIPE_CAPACITY - pipe->head;
+                if (first > copied) {
+                    first = copied;
+                }
+                memcpy(base, pipe->buffer + pipe->head, first);
+                if (copied > first) {
+                    memcpy((uint8_t *)base + first, pipe->buffer,
+                           copied - first);
+                }
+            }
+            pipe->head = (pipe->head + copied) % FS_PIPE_CAPACITY;
+            pipe->count -= copied;
+            spin_unlock(&pipe->lock);
+            pipe_wake_writers(pipe, 0);
+            return (int)copied;
+        }
+        if (pipe->writers == 0) {
+            spin_unlock(&pipe->lock);
+            return 0;                /* EOF after the last writer closes */
+        }
+        pipe->read_waiters++;
+        spin_unlock(&pipe->lock);
+        down(&pipe->read_sem);
+    }
+}
+
+static int
+pipe_write(struct pipe *pipe, const void *base, size_t len) {
+    size_t written = 0;
+    if (pipe == NULL || base == NULL || len == 0) {
+        return len == 0 ? 0 : -E_INVAL;
+    }
+    while (written < len) {
+        size_t copied;
+        spin_lock(&pipe->lock);
+        if (pipe->readers == 0) {
+            spin_unlock(&pipe->lock);
+            return written != 0 ? (int)written : -E_PIPE;
+        }
+        if (pipe->count < FS_PIPE_CAPACITY) {
+            copied = len - written;
+            if (copied > FS_PIPE_CAPACITY - pipe->count) {
+                copied = FS_PIPE_CAPACITY - pipe->count;
+            }
+            {
+                size_t first = FS_PIPE_CAPACITY - pipe->tail;
+                if (first > copied) {
+                    first = copied;
+                }
+                memcpy(pipe->buffer + pipe->tail,
+                       (const uint8_t *)base + written, first);
+                if (copied > first) {
+                    memcpy(pipe->buffer,
+                           (const uint8_t *)base + written + first,
+                           copied - first);
+                }
+            }
+            pipe->tail = (pipe->tail + copied) % FS_PIPE_CAPACITY;
+            pipe->count += copied;
+            written += copied;
+            spin_unlock(&pipe->lock);
+            pipe_wake_readers(pipe, 0);
+            continue;
+        }
+        pipe->write_waiters++;
+        spin_unlock(&pipe->lock);
+        down(&pipe->write_sem);
+    }
+    return (int)written;
+}
+
+int
+file_pipe(int fd[2]) {
+    struct files_struct *filesp = current_files();
+    struct file *read_file = NULL, *write_file = NULL;
+    struct open_file *read_description, *write_description;
+    struct pipe *pipe;
+    int ret;
+
+    if (fd == NULL) {
+        return -E_INVAL;
+    }
+    lock_files(filesp);
+    ret = fd_array_alloc(filesp, NO_FD, &read_file);
+    if (ret == 0) {
+        ret = fd_array_alloc(filesp, NO_FD, &write_file);
+    }
+    unlock_files(filesp);
+    if (ret != 0) {
+        lock_files(filesp);
+        if (read_file != NULL && read_file->status == FD_INIT) {
+            fd_array_cancel(read_file);
+        }
+        if (write_file != NULL && write_file->status == FD_INIT) {
+            fd_array_cancel(write_file);
+        }
+        unlock_files(filesp);
+        return ret;
+    }
+
+    pipe = pipe_create();
+    if (pipe == NULL) {
+        ret = -E_NO_MEM;
+        goto failed_slots;
+    }
+    read_description = open_file_create(OPEN_FILE_PIPE, 1, 0, 0, 0, pipe);
+    if (read_description == NULL) {
+        ret = -E_NO_MEM;
+        goto failed_pipe;
+    }
+    pipe_get(pipe);
+    write_description = open_file_create(OPEN_FILE_PIPE, 0, 1, 0, 0, pipe);
+    if (write_description == NULL) {
+        ret = -E_NO_MEM;
+        open_file_drop_descriptor(read_description);
+        open_file_put(read_description);
+        goto failed_pipe;
+    }
+    pipe_get(pipe);
+    pipe_endpoint_open(pipe, 1, 0);
+    pipe_endpoint_open(pipe, 0, 1);
+    pipe_put(pipe);                  /* drop temporary creator reference */
+
+    lock_files(filesp);
+    fd_array_install(read_file, read_description);
+    fd_array_install(write_file, write_description);
+    unlock_files(filesp);
+    fd[0] = read_file->fd;
+    fd[1] = write_file->fd;
+    return 0;
+
+failed_pipe:
+    pipe_put(pipe);                  /* creator reference */
+failed_slots:
+    lock_files(filesp);
+    if (read_file->status == FD_INIT) {
+        fd_array_cancel(read_file);
+    }
+    if (write_file->status == FD_INIT) {
+        fd_array_cancel(write_file);
+    }
+    unlock_files(filesp);
+    return ret;
+}
+
 int
 file_read(int fd, void *base, size_t len, size_t *copied_store) {
     struct open_file *description;
@@ -344,8 +649,27 @@ file_read(int fd, void *base, size_t len, size_t *copied_store) {
     int ret;
 
     *copied_store = 0;
-    if ((ret = regular_file_acquire(fd, 1, 0, &description)) != 0) {
+    if ((ret = fd_acquire(fd, &description)) != 0) {
         return ret;
+    }
+    if (description->kind == OPEN_FILE_PIPE) {
+        if (!description->readable) {
+            open_file_put(description);
+            return -E_INVAL;
+        }
+        down(&description->operation_sem);
+        ret = pipe_read(description->object.pipe, base, len);
+        up(&description->operation_sem);
+        if (ret > 0) {
+            *copied_store = (size_t)ret;
+            ret = 0;
+        }
+        open_file_put(description);
+        return ret;
+    }
+    if (description->kind != OPEN_FILE_INODE || !description->readable) {
+        open_file_put(description);
+        return -E_INVAL;
     }
     down(&description->operation_sem);
     iobuf_init(&iob, base, len, description->pos);
@@ -366,8 +690,27 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
     int ret;
 
     *copied_store = 0;
-    if ((ret = regular_file_acquire(fd, 0, 1, &description)) != 0) {
+    if ((ret = fd_acquire(fd, &description)) != 0) {
         return ret;
+    }
+    if (description->kind == OPEN_FILE_PIPE) {
+        if (!description->writable) {
+            open_file_put(description);
+            return -E_INVAL;
+        }
+        down(&description->operation_sem);
+        ret = pipe_write(description->object.pipe, base, len);
+        up(&description->operation_sem);
+        if (ret > 0) {
+            *copied_store = (size_t)ret;
+            ret = 0;
+        }
+        open_file_put(description);
+        return ret;
+    }
+    if (description->kind != OPEN_FILE_INODE || !description->writable) {
+        open_file_put(description);
+        return -E_INVAL;
     }
     down(&description->operation_sem);
     if (description->append) {

@@ -74,7 +74,9 @@ sysfile_read(int fd, void *base, size_t len) {
     int ret = 0;
     size_t copied = 0, alen;
     while (len != 0) {
-        if ((alen = IOBUF_SIZE) > len) {
+        size_t requested = len < IOBUF_SIZE ? len : IOBUF_SIZE;
+        alen = requested;
+        if (alen > len) {
             alen = len;
         }
         ret = file_read(fd, buffer, alen, &alen);
@@ -91,7 +93,11 @@ sysfile_read(int fd, void *base, size_t len) {
             }
             unlock_mm(mm);
         }
-        if (ret != 0 || alen == 0) {
+        /* A pipe is a byte stream: a successful short read is a complete
+         * read operation and must be returned immediately instead of trying
+         * to fill the caller's entire buffer.  This also matches regular
+         * file EOF behavior and avoids a second blocking read. */
+        if (ret != 0 || alen == 0 || alen < requested) {
             goto out;
         }
     }
@@ -320,7 +326,27 @@ sysfile_dup(int fd1, int fd2) {
 
 int
 sysfile_pipe(int *fd_store) {
-    return -E_UNIMP;
+    struct mm_struct *mm = current->mm;
+    int fds[2];
+    int ret;
+
+    if (mm == NULL || fd_store == NULL) {
+        return -E_INVAL;
+    }
+    ret = file_pipe(fds);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, fd_store, fds, sizeof(fds))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    if (ret != 0) {
+        file_close(fds[0]);
+        file_close(fds[1]);
+    }
+    return ret;
 }
 
 int

@@ -56,6 +56,11 @@ dup(int fd) {
     return sys_dup(fd, NO_FD);
 }
 
+int
+pipe(int fd[2]) {
+    return sys_pipe(fd);
+}
+
 static char
 transmode(struct stat *stat) {
     uint32_t mode = stat->st_mode;

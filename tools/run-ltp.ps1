@@ -68,7 +68,17 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 function Stop-ProcessTree([System.Diagnostics.Process]$Process) {
     if ($null -ne $Process -and -not $Process.HasExited) {
-        & taskkill.exe /PID $Process.Id /T /F *> $null
+        # QEMU may exit between HasExited and taskkill, and Windows can report
+        # an already-reaped child as a native nonzero exit.  Cleanup must not
+        # turn an otherwise recorded PASS/TIMEOUT into a PowerShell exception.
+        $previousErrorAction = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & taskkill.exe /PID $Process.Id /T /F *> $null
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
     }
 }
 

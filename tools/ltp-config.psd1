@@ -14,6 +14,7 @@
         'clonetest',
         'mmaptest',
         'fdsharetest',
+        'pipetest',
         'vfstest',
         'nettest',
         'affinitytest',

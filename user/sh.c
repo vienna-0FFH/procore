@@ -149,9 +149,9 @@ again:
             }
             break;
         case '|':
-          //  if ((ret = pipe(p)) != 0) {
-          //      return ret;
-          //  }
+            if ((ret = pipe(p)) != 0) {
+                return ret;
+            }
             if ((ret = fork()) == 0) {
                 close(0);
                 if ((ret = dup2(p[0], 0)) < 0) {

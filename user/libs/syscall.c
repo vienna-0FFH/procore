@@ -261,3 +261,8 @@ int
 sys_dup(int fd1, int fd2) {
     return syscall2(SYS_dup, fd1, fd2);
 }
+
+int
+sys_pipe(int fd[2]) {
+    return syscall1(SYS_pipe, (uintptr_t)fd);
+}
