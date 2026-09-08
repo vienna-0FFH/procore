@@ -8,15 +8,17 @@ The current network path is layered so each stage can be tested independently:
 | IPv4 and UDP loopback | implemented | `nettest` |
 | UDP `connect`/`send`/`recv` and readiness | implemented | `netconnecttest`, `polltest` |
 | Active TCP client | implemented | `httpget` |
-| TCP listen/accept, retransmission, congestion control | planned | not exposed yet |
+| TCP listen/accept and congestion control | planned | not exposed yet |
 | TLS/HTTPS | planned | requires a TLS library and certificate/time policy |
 
 The TCP implementation follows the wire-level behavior used by Linux and
 ReactOS (network-order headers, three-way handshake, sequence/acknowledgement
 validation, FIN/EOF, and TCP checksum handling), but is deliberately scoped to
 an active client until the shared connection table and listener backlog exist.
-It supports one in-flight segment per socket and the configured MSS; robust
-retransmission and congestion control remain separate milestones.
+It supports one in-flight segment per socket, the configured MSS, and bounded
+SYN/data retransmission controlled by `NET_TCP_RETRY_TICKS` and
+`NET_TCP_RETRY_LIMIT`; congestion control and a listener backlog remain
+separate milestones.
 
 ## Host HTTP Test
 
