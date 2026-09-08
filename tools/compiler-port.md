@@ -47,3 +47,27 @@ possible later alternative, but it requires porting substantially more libc,
 filesystem, process, and error-handling interfaces. Until that work is done,
 the bytecode compiler is the supported in-OS dynamic compilation path and is
 reported as such by the test runner.
+
+## Native ELF Probe
+
+`user/elfgen.c` is the first executable native-backend probe. It constructs an
+ELF32 image in memory, writes two `PT_LOAD` segments to `/native-elf-demo`, and
+calls the existing `exec` syscall. The generated i386 text uses only:
+
+```text
+mov edx, immediate
+mov eax, syscall number
+int 0x80
+```
+
+The image prints `native ELF pass: 42` through `SYS_putc` and exits with
+`SYS_exit(0)`. This exercises the ELF header, program-header, entry-point,
+segment-permission, file-offset, and loader behavior without requiring a
+runtime assembler or linker. It is intentionally a fixed backend probe, not a
+claim that arbitrary C has reached native code generation.
+
+Run it with:
+
+```powershell
+& '.\tools\run-ltp.ps1' -Tests elfgen
+```

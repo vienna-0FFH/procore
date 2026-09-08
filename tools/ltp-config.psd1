@@ -20,6 +20,7 @@
         'schedtest',
         'cowtest',
         'c4',
-        'ltp_legacy'
+        'ltp_legacy',
+        'elfgen'
     )
 }

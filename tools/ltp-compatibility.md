@@ -46,30 +46,33 @@ The current initial subset maps these LTP themes:
 | `cowtest` | memory management | fork COW and reclaim |
 | `c4` | dynamic compiler/runtime | load C source from SFS, compile to bytecode, execute |
 | `ltp_legacy` | legacy LTP syscall intent | adapted 20210927 process, memory, VFS, and CPU checks |
+| `elfgen` | native compiler backend contract | generate an ELF32 file in uCore and exec it |
 
 The latest complete uCore run used the configured four-vCPU QEMU topology
-(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All twelve
+(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All thirteen
 configured programs built successfully, reached their result marker, and
 returned status 0:
 
 | uCore runner result | Tests |
 | --- | --- |
-| `PASS` (12/12) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest`, `c4`, `ltp_legacy` |
+| `PASS` (13/13) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest`, `c4`, `ltp_legacy`, `elfgen` |
 
 The machine-readable record is `target/native/ltp/summary.csv`; serial logs are
 kept beside it. These are uCore/QEMU results, not upstream Linux LTP results.
 
-The compiler and legacy-port additions were also run individually on the same
-four-vCPU topology before the complete twelve-test run:
+The compiler, legacy-port, and native ELF additions were also run individually
+on the same four-vCPU topology before the complete thirteen-test run:
 
 | Test | Result | Detail |
 | --- | --- | --- |
 | `c4` | `PASS` | `/c4demo.c` compiled to bytecode and executed; status 0 |
 | `ltp_legacy` | `PASS` | 15 adapted checks, 0 failures; status 0 |
+| `elfgen` | `PASS` | generated ELF32 executed and returned status 0 |
 
 Their implementation and provenance are documented in `tools/compiler-port.md`
-and `tools/ltp-legacy.md`. The complete configured run now includes all twelve
-entries from `tools/ltp-config.psd1` and is recorded as `PASS (12/12)` above.
+and `tools/ltp-legacy.md`. The complete configured run now includes all
+thirteen entries from `tools/ltp-config.psd1` and is recorded as `PASS (13/13)`
+above.
 
 Upstream cases that depend on Linux-only facilities such as `/proc`, signals,
 ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
