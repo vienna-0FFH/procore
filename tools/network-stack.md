@@ -7,6 +7,7 @@ The current network path is layered so each stage can be tested independently:
 | e1000 DMA and ARP | implemented | `e1000test`, `netexternal` |
 | IPv4 and UDP loopback | implemented | `nettest` |
 | UDP `connect`/`send`/`recv` and readiness | implemented | `netconnecttest`, `polltest` |
+| User-space DNS A resolver | implemented | `dnstest` |
 | Active TCP client | implemented | `httpget` |
 | TCP listen/accept and congestion control | planned | not exposed yet |
 | TLS/HTTPS | planned | requires a TLS library and certificate/time policy |

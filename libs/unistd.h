@@ -10,6 +10,9 @@
 #ifndef NET_GATEWAY_IP
 #define NET_GATEWAY_IP      0x0202000AU
 #endif
+#ifndef NET_DNS_IP
+#define NET_DNS_IP          0x0302000AU
+#endif
 
 #define T_SYSCALL           0x80
 
