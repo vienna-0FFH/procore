@@ -44,6 +44,9 @@ int file_mkfifo(const char *name, uint32_t open_flags);
 int file_socket_create(int domain, int type, int protocol);
 int file_socket_bind(int fd, const struct sockaddr_in *address, size_t length);
 int file_socket_connect(int fd, const struct sockaddr_in *address, size_t length);
+int file_socket_listen(int fd, int backlog);
+int file_socket_accept(int fd, struct sockaddr_in *address, bool nonblock);
+int file_socket_shutdown(int fd, int how);
 int file_socket_sendto(int fd, const void *data, size_t length,
                        const struct sockaddr_in *destination, size_t dest_length);
 int file_socket_recvfrom(int fd, void *data, size_t length,

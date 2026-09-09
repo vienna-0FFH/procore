@@ -147,6 +147,21 @@ sys_connect(int fd, const struct sockaddr_in *address, size_t length) {
 }
 
 int
+sys_listen(int fd, int backlog) {
+    return syscall2(SYS_listen, fd, backlog);
+}
+
+int
+sys_accept(int fd, struct sockaddr_in *address, size_t length) {
+    return syscall3(SYS_accept, fd, (uintptr_t)address, length);
+}
+
+int
+sys_shutdown(int fd, int how) {
+    return syscall2(SYS_shutdown, fd, how);
+}
+
+int
 sys_send(int fd, const void *data, size_t length) {
     return syscall3(SYS_send, fd, (uintptr_t)data, length);
 }

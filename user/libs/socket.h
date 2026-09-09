@@ -6,6 +6,9 @@
 int socket(int domain, int type, int protocol);
 int bind(int fd, const struct sockaddr_in *address, size_t length);
 int connect(int fd, const struct sockaddr_in *address, size_t length);
+int listen(int fd, int backlog);
+int accept(int fd, struct sockaddr_in *address, size_t length);
+int shutdown(int fd, int how);
 int sendto(int fd, const void *data, size_t length,
            const struct sockaddr_in *destination, size_t dest_length);
 int recvfrom(int fd, void *data, size_t length,

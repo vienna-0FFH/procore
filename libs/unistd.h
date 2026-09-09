@@ -47,6 +47,9 @@
 #define SYS_recv            147
 #define SYS_getsockname     148
 #define SYS_getpeername     149
+#define SYS_listen          150
+#define SYS_accept          151
+#define SYS_shutdown        152
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -113,6 +116,11 @@ struct cpu_stat {
 #define O_TRUNC             0x00000010  // truncate file upon open
 #define O_APPEND            0x00000020  // append on each write
 #define O_NONBLOCK          0x00004000  // do not wait for pipe/socket readiness
+
+/* Socket half-close directions. */
+#define SHUT_RD             0
+#define SHUT_WR             1
+#define SHUT_RDWR           2
 // additonal related definition
 #define O_ACCMODE           3           // mask for O_RDONLY / O_WRONLY / O_RDWR
 

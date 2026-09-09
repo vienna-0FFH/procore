@@ -207,6 +207,11 @@ open_file_drop_descriptor(struct open_file *description) {
     descriptors = atomic_dec_return(&description->descriptor_count);
     assert(descriptors >= 0);
     if (descriptors == 0 && description->kind == OPEN_FILE_SOCKET) {
+        if (description->object.socket != NULL) {
+            /* Give a connected stream a bounded opportunity to flush its
+             * queued bytes and emit FIN before the descriptor is detached. */
+            (void)net_socket_shutdown(description->object.socket, SHUT_RDWR);
+        }
         net_socket_close_descriptor(description->object.socket);
     }
     else if (description->kind == OPEN_FILE_PIPE) {
@@ -1086,6 +1091,71 @@ file_socket_connect(int fd, const struct sockaddr_in *address, size_t length) {
     int ret = socket_file_acquire(fd, &description);
     if (ret == 0) {
         ret = net_socket_connect(description->object.socket, address, length);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_listen(int fd, int backlog) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_listen(description->object.socket, backlog);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_accept(int fd, struct sockaddr_in *address, bool nonblock) {
+    struct files_struct *filesp = current_files();
+    struct open_file *description;
+    struct net_socket *child = NULL;
+    struct open_file *accepted = NULL;
+    struct file *file;
+    int ret;
+
+    ret = socket_file_acquire(fd, &description);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = net_socket_accept(description->object.socket, &child, address,
+                            nonblock ||
+                            (description->status_flags & O_NONBLOCK) != 0);
+    open_file_put(description);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_files(filesp);
+    ret = fd_array_alloc(filesp, NO_FD, &file);
+    unlock_files(filesp);
+    if (ret != 0) {
+        net_socket_close_descriptor(child);
+        net_socket_put(child);
+        return ret;
+    }
+    accepted = open_file_create(OPEN_FILE_SOCKET, 1, 1, 0, 0, child);
+    if (accepted == NULL) {
+        lock_files(filesp);
+        fd_array_cancel(file);
+        unlock_files(filesp);
+        net_socket_close_descriptor(child);
+        net_socket_put(child);
+        return -E_NO_MEM;
+    }
+    lock_files(filesp);
+    fd_array_install(file, accepted);
+    unlock_files(filesp);
+    return file->fd;
+}
+
+int
+file_socket_shutdown(int fd, int how) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_shutdown(description->object.socket, how);
         open_file_put(description);
     }
     return ret;

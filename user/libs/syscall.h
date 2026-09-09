@@ -26,6 +26,9 @@ int sys_recvfrom(int fd, void *data, size_t length,
                  struct sockaddr_in *source, size_t source_length);
 int sys_netstat(struct net_stats *stats);
 int sys_connect(int fd, const struct sockaddr_in *address, size_t length);
+int sys_listen(int fd, int backlog);
+int sys_accept(int fd, struct sockaddr_in *address, size_t length);
+int sys_shutdown(int fd, int how);
 int sys_send(int fd, const void *data, size_t length);
 int sys_recv(int fd, void *data, size_t length);
 int sys_getsockname(int fd, struct sockaddr_in *address, size_t length);

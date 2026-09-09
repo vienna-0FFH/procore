@@ -33,6 +33,10 @@ static struct net_socket *
 net_find_port_addr_locked(uint16_t port, uint32_t addr);
 static struct net_socket *
 net_find_tcp_locked(uint16_t port, uint32_t addr, uint16_t peer_port);
+static struct net_socket *
+net_find_listener_locked(uint16_t port, uint32_t addr);
+static int
+net_tcp_start_fin(struct net_socket *socket);
 static void
 net_receive_tcp_frame(const uint8_t *frame, size_t length,
                       const uint8_t source_mac[NET_ETH_ADDR_LEN]);
@@ -493,6 +497,20 @@ net_find_tcp_locked(uint16_t port, uint32_t addr, uint16_t peer_port) {
     return NULL;
 }
 
+static struct net_socket *
+net_find_listener_locked(uint16_t port, uint32_t addr) {
+    list_entry_t *entry = &net_socket_list;
+    while ((entry = list_next(entry)) != &net_socket_list) {
+        struct net_socket *socket = to_struct(entry, struct net_socket, link);
+        if (socket->type == SOCK_STREAM && socket->bound &&
+            socket->listening && socket->port == port &&
+            (socket->addr == INADDR_ANY || socket->addr == addr)) {
+            return socket;
+        }
+    }
+    return NULL;
+}
+
 static void
 net_receive_tcp_frame(const uint8_t *frame, size_t length,
                       const uint8_t source_mac[NET_ETH_ADDR_LEN]) {
@@ -503,9 +521,14 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
     const uint8_t *payload;
     size_t payload_length;
     struct net_socket *socket;
+    struct net_socket *listener = NULL;
+    struct net_socket *accept_listener = NULL;
     bool send_ack = 0;
     bool mark_eof = 0;
     bool queue_data = 0;
+    bool accept_queued = 0;
+    bool accept_rejected = 0;
+    bool start_fin_after_ack = 0;
     int parse_ret;
     size_t acknowledged_bytes = 0;
 
@@ -525,7 +548,78 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
     if (socket != NULL) {
         net_socket_get(socket);
     }
+    else if ((flags & (NET_TCP_SYN | NET_TCP_ACK)) == NET_TCP_SYN) {
+        listener = net_find_listener_locked(destination_port, destination_ip);
+        if (listener != NULL) {
+            net_socket_get(listener);
+        }
+    }
     spin_unlock(&net_socket_lock);
+    if (socket == NULL && listener != NULL) {
+        struct net_socket *child;
+        uint32_t child_sequence;
+        bool reserved = 0;
+
+        spin_lock(&listener->lock);
+        if (!listener->closed && listener->listening &&
+            listener->accept_count < listener->listen_backlog) {
+            listener->accept_count++;
+            reserved = 1;
+        }
+        spin_unlock(&listener->lock);
+        if (!reserved) {
+            net_socket_put(listener);
+            return;
+        }
+
+        child = net_socket_create(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (child == NULL) {
+            spin_lock(&listener->lock);
+            if (listener->accept_count != 0) {
+                listener->accept_count--;
+            }
+            spin_unlock(&listener->lock);
+            net_socket_put(listener);
+            return;
+        }
+        child_sequence = ((uint32_t)ticks << 16) ^
+                         ((uint32_t)(uintptr_t)child >> 4);
+        spin_lock(&child->lock);
+        child->port = destination_port;
+        child->addr = listener->addr;
+        child->bound = 1;
+        child->connected = 1;
+        child->peer.sin_family = AF_INET;
+        child->peer.sin_port = source_port;
+        child->peer.sin_addr = source_ip;
+        memset(child->peer.sin_zero, 0, sizeof(child->peer.sin_zero));
+        child->tcp_snd_una = child_sequence;
+        child->tcp_snd_nxt = child_sequence + 1;
+        child->tcp_rcv_nxt = sequence + 1;
+        child->tcp_snd_wnd = window == 0 ? NET_TCP_MSS : window;
+        child->tcp_state = NET_TCP_SYN_RECEIVED;
+        child->tcp_eof = 0;
+        child->listener = listener; /* transfers the lookup reference */
+        spin_unlock(&child->lock);
+        if (net_tcp_send_segment(child, NET_TCP_SYN | NET_TCP_ACK,
+                                 child_sequence, child->tcp_rcv_nxt,
+                                 NULL, 0) < 0) {
+            spin_lock(&listener->lock);
+            if (listener->accept_count != 0) {
+                listener->accept_count--;
+            }
+            spin_unlock(&listener->lock);
+            net_socket_close_descriptor(child);
+            net_socket_put(child);
+            return;
+        }
+        net_tcp_record_tx(child, NET_TCP_SYN | NET_TCP_ACK,
+                          child_sequence, child->tcp_rcv_nxt, NULL, 0);
+        return;
+    }
+    if (listener != NULL) {
+        net_socket_put(listener);
+    }
     if (socket == NULL) {
         return;
     }
@@ -549,11 +643,37 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
         socket->tcp_last_tx_flags = 0;
         send_ack = 1;
     }
+    else if (!socket->closed && socket->tcp_state == NET_TCP_SYN_RECEIVED &&
+             (flags & NET_TCP_ACK) != 0 &&
+             acknowledgement == socket->tcp_snd_nxt) {
+        socket->tcp_snd_una = acknowledgement;
+        socket->tcp_snd_wnd = window == 0 ? NET_TCP_MSS : window;
+        socket->tcp_last_ack = acknowledgement;
+        socket->tcp_dup_acks = 0;
+        socket->tcp_state = NET_TCP_ESTABLISHED;
+        if (socket->tcp_last_tx_payload != NULL) {
+            kfree(socket->tcp_last_tx_payload);
+            socket->tcp_last_tx_payload = NULL;
+        }
+        socket->tcp_last_tx_len = 0;
+        socket->tcp_last_tx_flags = 0;
+        socket->tcp_fin_sent = 0;
+        accept_listener = socket->listener;
+        if (accept_listener != NULL) {
+            net_socket_get(accept_listener);
+        }
+        send_ack = 1;
+    }
     else if (!socket->closed &&
              (socket->tcp_state == NET_TCP_ESTABLISHED ||
-              socket->tcp_state == NET_TCP_CLOSE_WAIT)) {
+              socket->tcp_state == NET_TCP_CLOSE_WAIT ||
+              socket->tcp_state == NET_TCP_FIN_WAIT_1 ||
+              socket->tcp_state == NET_TCP_FIN_WAIT_2 ||
+              socket->tcp_state == NET_TCP_CLOSING ||
+              socket->tcp_state == NET_TCP_LAST_ACK)) {
         if ((flags & NET_TCP_RST) != 0) {
             socket->tcp_state = NET_TCP_CLOSED;
+            socket->tcp_fin_sent = 0;
             socket->tcp_eof = 1;
             mark_eof = 1;
         }
@@ -575,6 +695,26 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
                         else {
                             acknowledged_bytes = 0;
                         }
+                    }
+                    if (socket->tcp_fin_sent &&
+                        acknowledgement >= socket->tcp_snd_nxt) {
+                        socket->tcp_fin_sent = 0;
+                        if (socket->tcp_state == NET_TCP_FIN_WAIT_1) {
+                            socket->tcp_state = NET_TCP_FIN_WAIT_2;
+                        }
+                        else if (socket->tcp_state == NET_TCP_CLOSING ||
+                                 socket->tcp_state == NET_TCP_LAST_ACK) {
+                            socket->tcp_state = NET_TCP_CLOSED;
+                            socket->tcp_eof = 1;
+                            mark_eof = 1;
+                        }
+                        socket->tcp_last_tx_flags = 0;
+                    }
+                    if (socket->tcp_fin_pending &&
+                        socket->tcp_tx_count == 0 &&
+                        socket->tcp_snd_nxt == socket->tcp_snd_una) {
+                        socket->tcp_fin_pending = 0;
+                        start_fin_after_ack = 1;
                     }
                 }
                 else if (acknowledgement == socket->tcp_snd_una &&
@@ -600,7 +740,7 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
             }
             if (sequence == socket->tcp_rcv_nxt && payload_length != 0) {
                 socket->tcp_rcv_nxt += (uint32_t)payload_length;
-                queue_data = 1;
+                queue_data = !socket->tcp_read_shutdown;
                 send_ack = 1;
             }
             else if (payload_length != 0) {
@@ -609,7 +749,21 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
             if ((flags & NET_TCP_FIN) != 0 &&
                 sequence + (uint32_t)payload_length == socket->tcp_rcv_nxt) {
                 socket->tcp_rcv_nxt++;
-                socket->tcp_state = NET_TCP_CLOSE_WAIT;
+                if (socket->tcp_state == NET_TCP_CLOSED) {
+                    /* The ACK for our FIN may have closed the state before
+                     * a combined FIN/ACK reaches this branch. */
+                }
+                else if (socket->tcp_state == NET_TCP_FIN_WAIT_2) {
+                    socket->tcp_state = NET_TCP_CLOSED;
+                }
+                else if (socket->tcp_state == NET_TCP_FIN_WAIT_1 ||
+                         socket->tcp_state == NET_TCP_CLOSING ||
+                         socket->tcp_state == NET_TCP_LAST_ACK) {
+                    socket->tcp_state = NET_TCP_CLOSING;
+                }
+                else {
+                    socket->tcp_state = NET_TCP_CLOSE_WAIT;
+                }
                 socket->tcp_eof = 1;
                 send_ack = 1;
                 mark_eof = 1;
@@ -617,6 +771,48 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
         }
     }
     spin_unlock(&socket->lock);
+
+    if (start_fin_after_ack) {
+        (void)net_tcp_start_fin(socket);
+    }
+
+    if (accept_listener != NULL) {
+        spin_lock(&accept_listener->lock);
+        if (!accept_listener->closed && accept_listener->listening) {
+            list_add(&accept_listener->accept_queue, &socket->accept_link);
+            accept_queued = 1;
+        }
+        else {
+            accept_rejected = 1;
+            if (accept_listener->accept_count != 0) {
+                accept_listener->accept_count--;
+            }
+        }
+        spin_unlock(&accept_listener->lock);
+        if (accept_queued) {
+            up(&accept_listener->accept_sem);
+        }
+        net_socket_put(accept_listener);
+    }
+
+    if (accept_rejected) {
+        struct net_socket *owner;
+        spin_lock(&socket->lock);
+        owner = socket->listener;
+        socket->listener = NULL;
+        socket->closed = 1;
+        socket->connected = 0;
+        socket->tcp_state = NET_TCP_CLOSED;
+        socket->tcp_eof = 1;
+        spin_unlock(&socket->lock);
+        net_socket_close_descriptor(socket);
+        net_socket_put(socket); /* lookup reference */
+        net_socket_put(socket); /* unclaimed descriptor reference */
+        if (owner != NULL) {
+            net_socket_put(owner);
+        }
+        return;
+    }
 
     if (queue_data) {
         if (net_queue_packet(socket, payload, payload_length,
@@ -680,7 +876,7 @@ net_init(void) {
         net_statistics.hw_tx_errors = hardware.tx_errors;
         net_statistics.hw_rx_errors = hardware.rx_errors;
     }
-    cprintf("net: IPv4 UDP and active TCP client ready\n");
+    cprintf("net: IPv4 UDP and TCP client/server ready\n");
 }
 
 static void
@@ -708,6 +904,9 @@ net_tcp_retransmit(void) {
         size_t payload_length = 0;
         uint32_t sequence = 0, acknowledgement = 0;
         bool retry = 0;
+        bool drop_child = 0;
+        int eof_waiters = 0;
+        struct net_socket *child_listener = NULL;
         struct net_tcp_tx_segment *first;
         spin_lock(&socket->lock);
         first = net_tcp_first_tx_locked(socket);
@@ -738,13 +937,34 @@ net_tcp_retransmit(void) {
             }
         }
         if (!retry && !socket->closed && socket->tcp_last_tx_flags != 0 &&
-            socket->tcp_state == NET_TCP_SYN_SENT &&
+            (socket->tcp_state == NET_TCP_SYN_SENT ||
+             socket->tcp_state == NET_TCP_SYN_RECEIVED ||
+             socket->tcp_state == NET_TCP_FIN_WAIT_1 ||
+             socket->tcp_state == NET_TCP_CLOSING ||
+             socket->tcp_state == NET_TCP_LAST_ACK) &&
             (size_t)(ticks - socket->tcp_last_tx_tick) >=
                 NET_TCP_RETRY_TICKS) {
             if (socket->tcp_retry_count >= NET_TCP_RETRY_LIMIT) {
                 if (socket->tcp_state == NET_TCP_SYN_SENT) {
                     socket->tcp_state = NET_TCP_CLOSED;
                     socket->connected = 0;
+                }
+                else if (socket->tcp_state == NET_TCP_SYN_RECEIVED) {
+                    socket->tcp_state = NET_TCP_CLOSED;
+                    socket->connected = 0;
+                    socket->closed = 1;
+                    socket->tcp_eof = 1;
+                    child_listener = socket->listener;
+                    socket->listener = NULL;
+                    drop_child = 1;
+                }
+                else if (socket->tcp_state == NET_TCP_FIN_WAIT_1 ||
+                         socket->tcp_state == NET_TCP_CLOSING ||
+                         socket->tcp_state == NET_TCP_LAST_ACK) {
+                    socket->tcp_state = NET_TCP_CLOSED;
+                    socket->tcp_fin_sent = 0;
+                    socket->tcp_eof = 1;
+                    eof_waiters = socket->waiters;
                 }
                 socket->tcp_last_tx_flags = 0;
             }
@@ -768,6 +988,9 @@ net_tcp_retransmit(void) {
             }
         }
         spin_unlock(&socket->lock);
+        while (eof_waiters-- > 0) {
+            up(&socket->rx_sem);
+        }
         if (retry) {
             (void)net_tcp_send_segment(socket, flags, sequence,
                                        acknowledgement, payload,
@@ -775,6 +998,18 @@ net_tcp_retransmit(void) {
         }
         if (payload != NULL) {
             kfree(payload);
+        }
+        if (drop_child) {
+            if (child_listener != NULL) {
+                spin_lock(&child_listener->lock);
+                if (child_listener->accept_count != 0) {
+                    child_listener->accept_count--;
+                }
+                spin_unlock(&child_listener->lock);
+                net_socket_put(child_listener);
+            }
+            net_socket_close_descriptor(socket);
+            net_socket_put(socket); /* child ownership */
         }
         net_socket_put(socket);
     }
@@ -817,6 +1052,9 @@ net_socket_create(int domain, int type, int protocol) {
     spin_init(&socket->lock);
     sem_init(&socket->rx_sem, 0);
     list_init(&socket->rx_queue);
+    sem_init(&socket->accept_sem, 0);
+    list_init(&socket->accept_queue);
+    list_init(&socket->accept_link);
     socket->rx_count = 0;
     socket->waiters = 0;
     socket->ref_count = 1;
@@ -827,6 +1065,11 @@ net_socket_create(int domain, int type, int protocol) {
     socket->addr = INADDR_ANY;
     socket->bound = 0;
     socket->connected = 0;
+    socket->listening = 0;
+    socket->listen_backlog = 0;
+    socket->accept_count = 0;
+    socket->accept_waiters = 0;
+    socket->listener = NULL;
     memset(&socket->peer, 0, sizeof(socket->peer));
     socket->tcp_state = NET_TCP_CLOSED;
     socket->tcp_snd_una = 0;
@@ -834,6 +1077,10 @@ net_socket_create(int domain, int type, int protocol) {
     socket->tcp_rcv_nxt = 0;
     socket->connect_waiters = 0;
     socket->tcp_eof = 0;
+    socket->tcp_read_shutdown = 0;
+    socket->tcp_write_shutdown = 0;
+    socket->tcp_fin_sent = 0;
+    socket->tcp_fin_pending = 0;
     socket->tcp_last_tx_len = 0;
     socket->tcp_last_tx_seq = 0;
     socket->tcp_last_tx_ack = 0;
@@ -881,27 +1128,72 @@ net_socket_get_descriptor(struct net_socket *socket) {
 void
 net_socket_close_descriptor(struct net_socket *socket) {
     int waiters = 0;
+    int accept_waiters = 0;
     if (socket == NULL ||
         atomic_dec_return(&socket->descriptor_count) != 0) {
         return;
     }
     spin_lock(&socket->lock);
     socket->closed = 1;
+    socket->listening = 0;
     waiters = socket->waiters;
+    accept_waiters = socket->accept_waiters;
     spin_unlock(&socket->lock);
     while (waiters-- > 0) {
         up(&socket->rx_sem);
+    }
+    while (accept_waiters-- > 0) {
+        up(&socket->accept_sem);
+    }
+
+    /* A listener owns the queued child sockets until accept() transfers one
+     * to a descriptor. Closing the listener must release that ownership and
+     * wake any child retransmission/receive state without leaving dangling
+     * accept_link entries. */
+    for (;;) {
+        struct net_socket *child = NULL;
+        struct net_socket *owner = NULL;
+        spin_lock(&socket->lock);
+        if (list_next(&socket->accept_queue) != &socket->accept_queue) {
+            list_entry_t *entry = list_next(&socket->accept_queue);
+            child = to_struct(entry, struct net_socket, accept_link);
+            list_del_init(entry);
+            if (socket->accept_count != 0) {
+                socket->accept_count--;
+            }
+            spin_lock(&child->lock);
+            owner = child->listener;
+            child->listener = NULL;
+            child->closed = 1;
+            child->connected = 0;
+            child->tcp_state = NET_TCP_CLOSED;
+            child->tcp_eof = 1;
+            spin_unlock(&child->lock);
+        }
+        spin_unlock(&socket->lock);
+        if (child == NULL) {
+            break;
+        }
+        up(&child->rx_sem);
+        net_socket_close_descriptor(child);
+        net_socket_put(child);
+        if (owner != NULL) {
+            net_socket_put(owner);
+        }
     }
 }
 
 void
 net_socket_put(struct net_socket *socket) {
     list_entry_t *entry;
+    struct net_socket *listener;
 
     if (socket == NULL || atomic_dec_return(&socket->ref_count) != 0) {
         return;
     }
     socket->closed = 1;
+    listener = socket->listener;
+    socket->listener = NULL;
     spin_lock(&net_socket_lock);
     if (!list_empty(&socket->link)) {
         list_del_init(&socket->link);
@@ -931,6 +1223,9 @@ net_socket_put(struct net_socket *socket) {
         kfree(socket->tcp_last_tx_payload);
     }
     kfree(socket);
+    if (listener != NULL) {
+        net_socket_put(listener);
+    }
 }
 
 int
@@ -966,6 +1261,276 @@ net_socket_bind(struct net_socket *socket,
     }
     spin_unlock(&net_socket_lock);
     return ret;
+}
+
+int
+net_socket_listen(struct net_socket *socket, int backlog) {
+    uint16_t port;
+    int ret = 0;
+
+    if (socket == NULL || socket->type != SOCK_STREAM || backlog < 1) {
+        return -E_INVAL;
+    }
+    if ((unsigned int)backlog > NET_TCP_LISTEN_BACKLOG) {
+        backlog = NET_TCP_LISTEN_BACKLOG;
+    }
+    spin_lock(&net_socket_lock);
+    if (socket->closed) {
+        ret = -E_BAD_PROC;
+    }
+    else if (socket->connected) {
+        ret = -E_BUSY;
+    }
+    else if (socket->listening) {
+        ret = socket->listen_backlog == (unsigned int)backlog ?
+              0 : -E_BUSY;
+    }
+    else {
+        if (!socket->bound) {
+            ret = net_allocate_port_locked(&port);
+            if (ret == 0) {
+                socket->port = port;
+                socket->addr = INADDR_ANY;
+                socket->bound = 1;
+            }
+        }
+        if (ret == 0) {
+            socket->listen_backlog = (unsigned int)backlog;
+            socket->listening = 1;
+        }
+    }
+    spin_unlock(&net_socket_lock);
+    return ret;
+}
+
+static int
+net_tcp_start_fin(struct net_socket *socket) {
+    uint32_t sequence;
+    uint32_t acknowledgement;
+    enum {
+        FIN_FROM_ESTABLISHED,
+        FIN_FROM_CLOSE_WAIT
+    } origin;
+    int ret;
+
+    spin_lock(&socket->lock);
+    if (socket->closed) {
+        spin_unlock(&socket->lock);
+        return -E_BAD_PROC;
+    }
+    if (socket->tcp_fin_sent || socket->tcp_state == NET_TCP_FIN_WAIT_2 ||
+        socket->tcp_state == NET_TCP_CLOSING ||
+        socket->tcp_state == NET_TCP_LAST_ACK) {
+        spin_unlock(&socket->lock);
+        return 0;
+    }
+    if (socket->tcp_state == NET_TCP_ESTABLISHED) {
+        origin = FIN_FROM_ESTABLISHED;
+    }
+    else if (socket->tcp_state == NET_TCP_CLOSE_WAIT) {
+        origin = FIN_FROM_CLOSE_WAIT;
+    }
+    else {
+        spin_unlock(&socket->lock);
+        return -E_BAD_PROC;
+    }
+    if (socket->tcp_tx_count != 0 ||
+        socket->tcp_snd_nxt != socket->tcp_snd_una) {
+        spin_unlock(&socket->lock);
+        return -E_BUSY;
+    }
+    sequence = socket->tcp_snd_nxt;
+    acknowledgement = socket->tcp_rcv_nxt;
+    socket->tcp_snd_nxt++;
+    socket->tcp_fin_sent = 1;
+    socket->tcp_fin_pending = 0;
+    socket->tcp_state = origin == FIN_FROM_ESTABLISHED ?
+                        NET_TCP_FIN_WAIT_1 : NET_TCP_LAST_ACK;
+    spin_unlock(&socket->lock);
+
+    /* Record the control segment before transmitting. A peer cannot ACK a
+     * segment that has not left the device, and this ordering prevents an
+     * SMP timer interrupt from observing an untracked FIN. */
+    net_tcp_record_tx(socket, NET_TCP_FIN | NET_TCP_ACK,
+                      sequence, acknowledgement, NULL, 0);
+    ret = net_tcp_send_segment(socket, NET_TCP_FIN | NET_TCP_ACK,
+                               sequence, acknowledgement, NULL, 0);
+    if (ret < 0) {
+        spin_lock(&socket->lock);
+        if (socket->tcp_fin_sent && socket->tcp_last_tx_seq == sequence) {
+            socket->tcp_fin_sent = 0;
+            socket->tcp_snd_nxt--;
+            socket->tcp_state = origin == FIN_FROM_ESTABLISHED ?
+                                NET_TCP_ESTABLISHED : NET_TCP_CLOSE_WAIT;
+            socket->tcp_last_tx_flags = 0;
+            socket->tcp_retry_count = 0;
+        }
+        spin_unlock(&socket->lock);
+        return ret;
+    }
+    return 0;
+}
+
+int
+net_socket_shutdown(struct net_socket *socket, int how) {
+    bool write_requested;
+    bool wait_for_fin;
+    int waiters = 0;
+    size_t start_tick;
+    int ret;
+
+    if (socket == NULL || socket->type != SOCK_STREAM ||
+        (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR)) {
+        return -E_INVAL;
+    }
+    spin_lock(&socket->lock);
+    if (socket->closed || socket->listening || !socket->connected) {
+        spin_unlock(&socket->lock);
+        return -E_INVAL;
+    }
+    write_requested = how == SHUT_WR || how == SHUT_RDWR;
+    wait_for_fin = socket->descriptor_count == 0;
+    if (how == SHUT_RD || how == SHUT_RDWR) {
+        struct net_packet *packet;
+        list_entry_t *entry;
+        socket->tcp_read_shutdown = 1;
+        socket->tcp_eof = 1;
+        waiters = socket->waiters;
+        while ((entry = list_next(&socket->rx_queue)) !=
+               &socket->rx_queue) {
+            packet = to_struct(entry, struct net_packet, link);
+            list_del_init(entry);
+            kfree(packet);
+        }
+        socket->rx_count = 0;
+    }
+    if (write_requested) {
+        socket->tcp_write_shutdown = 1;
+    }
+    spin_unlock(&socket->lock);
+    while (waiters-- > 0) {
+        up(&socket->rx_sem);
+    }
+    if (!write_requested) {
+        return 0;
+    }
+
+    start_tick = ticks;
+    for (;;) {
+        ret = net_tcp_start_fin(socket);
+        if (ret == 0) {
+            bool pending_fin;
+            spin_lock(&socket->lock);
+            pending_fin = socket->tcp_fin_sent &&
+                          (socket->tcp_state == NET_TCP_FIN_WAIT_1 ||
+                           socket->tcp_state == NET_TCP_CLOSING ||
+                           socket->tcp_state == NET_TCP_LAST_ACK);
+            spin_unlock(&socket->lock);
+            if (!pending_fin) {
+                return 0;
+            }
+            ret = -E_BUSY;
+        }
+        else if (ret == -E_BUSY && !wait_for_fin) {
+            spin_lock(&socket->lock);
+            if (!socket->tcp_fin_sent) {
+                socket->tcp_fin_pending = 1;
+            }
+            spin_unlock(&socket->lock);
+            return 0;
+        }
+        if (ret != -E_BUSY) {
+            return ret;
+        }
+        if ((size_t)(ticks - start_tick) >= NET_TCP_SHUTDOWN_TIMEOUT) {
+            return -E_TIMEOUT;
+        }
+        net_poll();
+        asm volatile ("pause");
+    }
+}
+
+int
+net_socket_accept(struct net_socket *socket,
+                  struct net_socket **accepted_store,
+                  struct sockaddr_in *address, bool nonblock) {
+    struct net_socket *child;
+    struct net_socket *listener;
+
+    if (socket == NULL || accepted_store == NULL ||
+        socket->type != SOCK_STREAM) {
+        return -E_INVAL;
+    }
+    for (;;) {
+        spin_lock(&socket->lock);
+        if (socket->closed || !socket->listening) {
+            spin_unlock(&socket->lock);
+            return -E_BAD_PROC;
+        }
+        child = NULL;
+        listener = NULL;
+        {
+            list_entry_t *entry = list_next(&socket->accept_queue);
+            while (entry != &socket->accept_queue) {
+                struct net_socket *candidate =
+                    to_struct(entry, struct net_socket, accept_link);
+                list_entry_t *next = list_next(entry);
+                int state;
+                spin_lock(&candidate->lock);
+                state = candidate->tcp_state == NET_TCP_ESTABLISHED ? 1 :
+                        ((candidate->tcp_state == NET_TCP_CLOSED ||
+                          candidate->closed) ? -1 : 0);
+                if (state != 0) {
+                    list_del_init(entry);
+                    if (socket->accept_count != 0) {
+                        socket->accept_count--;
+                    }
+                    listener = candidate->listener;
+                    candidate->listener = NULL;
+                    if (state > 0 && address != NULL) {
+                        *address = candidate->peer;
+                    }
+                }
+                spin_unlock(&candidate->lock);
+                if (state > 0) {
+                    child = candidate;
+                    break;
+                }
+                if (state < 0) {
+                    spin_unlock(&socket->lock);
+                    if (listener != NULL) {
+                        net_socket_put(listener);
+                    }
+                    net_socket_close_descriptor(candidate);
+                    net_socket_put(candidate);
+                    spin_lock(&socket->lock);
+                    entry = list_next(&socket->accept_queue);
+                    continue;
+                }
+                entry = next;
+            }
+        }
+        if (child != NULL) {
+            spin_unlock(&socket->lock);
+            if (listener != NULL) {
+                net_socket_put(listener);
+            }
+            *accepted_store = child;
+            return 0;
+        }
+        if (nonblock) {
+            spin_unlock(&socket->lock);
+            return -E_BUSY;
+        }
+        socket->accept_waiters++;
+        spin_unlock(&socket->lock);
+        down(&socket->accept_sem);
+        spin_lock(&socket->lock);
+        if (socket->accept_waiters > 0) {
+            socket->accept_waiters--;
+        }
+        spin_unlock(&socket->lock);
+    }
 }
 
 int
@@ -1238,10 +1803,13 @@ net_socket_send(struct net_socket *socket, const void *data, size_t length) {
             segment->sent_tick = 0;
             segment->retries = 0;
             spin_lock(&socket->lock);
-            if (socket->closed || socket->tcp_state != NET_TCP_ESTABLISHED) {
+            if (socket->closed ||
+                (socket->tcp_state != NET_TCP_ESTABLISHED &&
+                 socket->tcp_state != NET_TCP_CLOSE_WAIT) ||
+                socket->tcp_write_shutdown) {
                 spin_unlock(&socket->lock);
                 kfree(segment);
-                return offset != 0 ? (int)offset : -E_BAD_PROC;
+                return offset != 0 ? (int)offset : -E_PIPE;
             }
             if (socket->tcp_snd_wnd == 0) {
                 spin_unlock(&socket->lock);
@@ -1318,6 +1886,10 @@ net_socket_recv(struct net_socket *socket, void *data, size_t length,
         list_entry_t *entry;
         for (;;) {
             spin_lock(&socket->lock);
+            if (socket->tcp_read_shutdown) {
+                spin_unlock(&socket->lock);
+                return 0;
+            }
             if (socket->rx_count != 0) {
                 entry = list_next(&socket->rx_queue);
                 packet = to_struct(entry, struct net_packet, link);
@@ -1434,7 +2006,11 @@ net_socket_poll(struct net_socket *socket, int16_t events,
         revents |= POLLHUP | POLLERR;
     }
     else if (socket->type == SOCK_STREAM) {
-        if ((events & POLLIN) != 0 &&
+        if ((events & POLLIN) != 0 && socket->listening &&
+            list_next(&socket->accept_queue) != &socket->accept_queue) {
+            revents |= POLLIN;
+        }
+        if ((events & POLLIN) != 0 && !socket->listening &&
             (socket->rx_count != 0 || socket->tcp_eof)) {
             revents |= POLLIN;
         }

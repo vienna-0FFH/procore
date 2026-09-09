@@ -57,12 +57,13 @@
 #endif
 
 #ifndef NET_ARP_REQUEST_RETRIES
-#define NET_ARP_REQUEST_RETRIES       2U
+#define NET_ARP_REQUEST_RETRIES       4U
 #endif
 
 #ifndef NET_ARP_WAIT_TICKS
 #define NET_ARP_WAIT_TICKS             200U
 #endif
+
 
 #ifndef NET_IP_TTL
 #define NET_IP_TTL                   64U
@@ -102,6 +103,14 @@
 
 #ifndef NET_TCP_MAX_WRITE
 #define NET_TCP_MAX_WRITE             262144U
+#endif
+
+#ifndef NET_TCP_LISTEN_BACKLOG
+#define NET_TCP_LISTEN_BACKLOG        8U
+#endif
+
+#ifndef NET_TCP_SHUTDOWN_TIMEOUT
+#define NET_TCP_SHUTDOWN_TIMEOUT      500U
 #endif
 
 #if NET_MAX_SOCKETS < 1
@@ -152,6 +161,12 @@
 #endif
 #if NET_TCP_MAX_WRITE < NET_TCP_MSS
 #error "TCP maximum write must fit one MSS"
+#endif
+#if NET_TCP_LISTEN_BACKLOG < 1
+#error "TCP listen backlog must be positive"
+#endif
+#if NET_TCP_SHUTDOWN_TIMEOUT < 1
+#error "TCP shutdown timeout must be positive"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */

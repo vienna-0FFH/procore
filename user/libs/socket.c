@@ -17,6 +17,21 @@ connect(int fd, const struct sockaddr_in *address, size_t length) {
 }
 
 int
+listen(int fd, int backlog) {
+    return sys_listen(fd, backlog);
+}
+
+int
+accept(int fd, struct sockaddr_in *address, size_t length) {
+    return sys_accept(fd, address, length);
+}
+
+int
+shutdown(int fd, int how) {
+    return sys_shutdown(fd, how);
+}
+
+int
 sendto(int fd, const void *data, size_t length,
        const struct sockaddr_in *destination, size_t dest_length) {
     return sys_sendto(fd, data, length, destination, dest_length);

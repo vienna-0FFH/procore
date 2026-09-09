@@ -10,19 +10,19 @@ The current network path is layered so each stage can be tested independently:
 | User-space DNS A resolver | implemented | `dnstest` |
 | Active TCP client | implemented | `httpget` |
 | TCP send window, slow start, congestion avoidance, duplicate-ACK recovery | implemented | `tcpwindowtest` |
-| TCP listen/accept | planned | not exposed yet |
+| TCP listen/accept and backlog | implemented | `tcplisten`, `tcplistentest` |
+| TCP FIN close and half-close (`shutdown`) | implemented | `tcplisten`, `tcpshutdowntest` |
 | TLS 1.2 client with X.509 verification | implemented for bundled test CA | `httpsget` |
 | Public-root HTTPS trust store and clock policy | planned | external sites need bundled roots and valid time |
 
 The TCP implementation follows the wire-level behavior used by Linux and
 ReactOS (network-order headers, three-way handshake, sequence/acknowledgement
-validation, FIN/EOF, and TCP checksum handling), but is deliberately scoped to
-an active client until the shared connection table and listener backlog exist.
-It supports a bounded send queue, advertised receive window, congestion
-window, slow start, congestion avoidance, duplicate-ACK fast retransmit, and
-bounded SYN/data retransmission controlled by `NET_TCP_RETRY_TICKS` and
-`NET_TCP_RETRY_LIMIT`. A listener backlog and full FIN state machine remain
-separate milestones.
+validation, FIN/EOF, and TCP checksum handling). It supports a bounded send
+queue, advertised receive window, congestion window, slow start, congestion
+avoidance, duplicate-ACK fast retransmit, listener backlog, and bounded
+SYN/data/FIN retransmission controlled by `NET_TCP_RETRY_TICKS` and
+`NET_TCP_RETRY_LIMIT`. The `NET_TCP_LISTEN_BACKLOG` and
+`NET_TCP_SHUTDOWN_TIMEOUT` policy knobs live in `kern/net/net_config.h`.
 
 ## Host HTTP Test
 

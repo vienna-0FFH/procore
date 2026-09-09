@@ -499,6 +499,42 @@ sys_connect(uint32_t arg[]) {
 }
 
 static int
+sys_listen(uint32_t arg[]) {
+    return file_socket_listen((int)arg[0], (int)arg[1]);
+}
+
+static int
+sys_accept(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sockaddr_in address;
+    int ret;
+
+    if (mm == NULL || (arg[1] != 0 && (size_t)arg[2] < sizeof(address))) {
+        return -E_INVAL;
+    }
+    ret = file_socket_accept((int)arg[0], &address, 0);
+    if (ret < 0 || arg[1] == 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &address, sizeof(address))) {
+        unlock_mm(mm);
+        file_close(ret);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_shutdown(uint32_t arg[]) {
+    if (arg[1] > SHUT_RDWR) {
+        return -E_INVAL;
+    }
+    return file_socket_shutdown((int)arg[0], (int)arg[1]);
+}
+
+static int
 sys_send(uint32_t arg[]) {
     struct mm_struct *mm = current->mm;
     void *buffer;
@@ -705,6 +741,9 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_recv]              sys_recv,
     [SYS_getsockname]       sys_getsockname,
     [SYS_getpeername]       sys_getpeername,
+    [SYS_listen]            sys_listen,
+    [SYS_accept]            sys_accept,
+    [SYS_shutdown]          sys_shutdown,
     [SYS_fcntl]             sys_fcntl,
     [SYS_poll]              sys_poll,
 };

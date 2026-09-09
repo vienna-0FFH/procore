@@ -7,6 +7,7 @@ param(
     [switch]$QemuUserNet,
     [switch]$QemuHostHttp,
     [switch]$QemuHostTcpEcho,
+    [switch]$QemuHostTcpListener,
     [switch]$QemuHostHttps,
     [string]$QemuPath = '',
     [string]$TccSource = 'user/hello.c',
@@ -57,6 +58,10 @@ $UseQemuHostTcpEcho = $QemuHostTcpEcho.IsPresent -or [bool]$Config.QemuHostTcpEc
 $QemuHostTcpEchoPort = if ($Config.QemuHostTcpEchoPort) {
     [int]$Config.QemuHostTcpEchoPort
 } else { 18081 }
+$UseQemuHostTcpListener = $QemuHostTcpListener.IsPresent -or [bool]$Config.QemuHostTcpListener
+$QemuHostTcpListenerPort = if ($Config.QemuHostTcpListenerPort) {
+    [int]$Config.QemuHostTcpListenerPort
+} else { 18082 }
 $UseQemuHostHttps = $QemuHostHttps.IsPresent -or [bool]$Config.QemuHostHttps
 $QemuHostHttpsPort = if ($Config.QemuHostHttpsPort) {
     [int]$Config.QemuHostHttpsPort
@@ -163,6 +168,7 @@ foreach ($Test in $Tests) {
     $qemuProcess = $null
     $httpProcess = $null
     $tcpEchoProcess = $null
+    $tcpListenerProcess = $null
     $httpsProcess = $null
     $buildOk = $false
     $qemuOk = $false
@@ -230,7 +236,8 @@ foreach ($Test in $Tests) {
                 throw "host HTTP server did not listen on port $QemuHostHttpPort"
             }
         }
-        if ($UseQemuHostTcpEcho -and $Test -eq 'tcpwindowtest') {
+        if ($UseQemuHostTcpEcho -and
+            ($Test -eq 'tcpwindowtest' -or $Test -eq 'tcpshutdowntest')) {
             $echoScript = Join-Path $Project 'tools\tcp-echo-test.py'
             $tcpEchoProcess = Start-Process -FilePath 'python' `
                 -ArgumentList @($echoScript, "$QemuHostTcpEchoPort") `
@@ -241,6 +248,15 @@ foreach ($Test in $Tests) {
             if (-not (Wait-HostTcpPort $QemuHostTcpEchoPort 5000)) {
                 throw "host TCP echo server did not listen on port $QemuHostTcpEchoPort"
             }
+        }
+        if ($UseQemuHostTcpListener -and $Test -eq 'tcplisten') {
+            $listenerScript = Join-Path $Project 'tools\tcp-listener-test.py'
+            $tcpListenerProcess = Start-Process -FilePath 'python' `
+                -ArgumentList @($listenerScript, "$QemuHostTcpListenerPort") `
+                -WorkingDirectory $Project -RedirectStandardOutput `
+                (Join-Path $LogDir "$Test-$stamp-listener.out") `
+                -RedirectStandardError (Join-Path $LogDir "$Test-$stamp-listener.err") `
+                -PassThru -WindowStyle Hidden
         }
         if ($UseQemuHostHttps -and $Test -eq 'httpsget') {
             $httpsScript = Join-Path $Project 'tools\https-test-server.py'
@@ -266,6 +282,10 @@ foreach ($Test in $Tests) {
         if ($UseQemuUserNet) {
             $netdev = "user,id=net0,hostfwd=udp:127.0.0.1:{0}-10.0.2.15:{1}" -f
                 $QemuHostUdpPort, $QemuGuestUdpPort
+            if ($UseQemuHostTcpListener -and $Test -eq 'tcplisten') {
+                $netdev += ",hostfwd=tcp:127.0.0.1:{0}-10.0.2.15:{1}" -f
+                    $QemuHostTcpListenerPort, 18082
+            }
             $qemuArgs += @(
                 '-net', 'none',
                 '-netdev', $netdev,
@@ -323,6 +343,7 @@ foreach ($Test in $Tests) {
         Stop-ProcessTree $qemuProcess
         Stop-ProcessTree $httpProcess
         Stop-ProcessTree $tcpEchoProcess
+        Stop-ProcessTree $tcpListenerProcess
         Stop-ProcessTree $httpsProcess
         Stop-ProcessTree $buildProcess
     }
