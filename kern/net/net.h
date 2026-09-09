@@ -15,6 +15,18 @@ struct net_packet {
     uint8_t data[1];
 };
 
+struct net_tcp_tx_segment {
+    list_entry_t link;
+    uint32_t sequence;
+    uint32_t acknowledgement;
+    uint8_t flags;
+    bool sent;
+    size_t length;
+    size_t sent_tick;
+    unsigned int retries;
+    uint8_t data[1];
+};
+
 struct net_socket {
     list_entry_t link;
     spinlock_t lock;
@@ -49,6 +61,13 @@ struct net_socket {
     size_t tcp_last_tx_tick;
     unsigned int tcp_retry_count;
     uint8_t *tcp_last_tx_payload;
+    list_entry_t tcp_tx_queue;
+    size_t tcp_tx_count;
+    uint32_t tcp_snd_wnd;
+    uint32_t tcp_cwnd;
+    uint32_t tcp_ssthresh;
+    uint32_t tcp_last_ack;
+    unsigned int tcp_dup_acks;
     volatile bool closed;
 };
 

@@ -124,6 +124,7 @@ int net_parse_tcp_frame(const uint8_t *frame, size_t length,
                         uint16_t *destination_port, uint32_t *source_ip,
                         uint32_t *destination_ip, uint32_t *sequence,
                         uint32_t *acknowledgement, uint8_t *flags,
+                        uint16_t *window,
                         const uint8_t **payload, size_t *payload_length);
 
 int net_parse_arp_frame(const uint8_t *frame, size_t length,

@@ -320,6 +320,7 @@ net_parse_tcp_frame(const uint8_t *frame, size_t length,
                     uint16_t *destination_port, uint32_t *source_ip,
                     uint32_t *destination_ip, uint32_t *sequence,
                     uint32_t *acknowledgement, uint8_t *flags,
+                    uint16_t *window,
                     const uint8_t **payload, size_t *payload_length) {
     const struct net_eth_header *ethernet;
     const struct net_ipv4_header *ip;
@@ -331,7 +332,8 @@ net_parse_tcp_frame(const uint8_t *frame, size_t length,
         NET_IPV4_MIN_HEADER_LEN + NET_TCP_MIN_HEADER_LEN ||
         source_port == NULL || destination_port == NULL ||
         source_ip == NULL || destination_ip == NULL || sequence == NULL ||
-        acknowledgement == NULL || flags == NULL || payload == NULL ||
+        acknowledgement == NULL || flags == NULL || window == NULL ||
+        payload == NULL ||
         payload_length == NULL) {
         return -E_INVAL;
     }
@@ -377,6 +379,7 @@ net_parse_tcp_frame(const uint8_t *frame, size_t length,
     *sequence = net_ntohl(tcp->sequence);
     *acknowledgement = net_ntohl(tcp->acknowledgement);
     *flags = tcp->flags;
+    *window = ntohs(tcp->window);
     *payload = (const uint8_t *)tcp + tcp_header_length;
     *payload_length = tcp_length - tcp_header_length;
     return 0;

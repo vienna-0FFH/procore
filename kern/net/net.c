@@ -278,6 +278,75 @@ net_tcp_record_tx(struct net_socket *socket, uint8_t flags,
     spin_unlock(&socket->lock);
 }
 
+static uint32_t
+net_tcp_window_locked(struct net_socket *socket) {
+    uint32_t window = socket->tcp_snd_wnd;
+    if (window > NET_TCP_MAX_WINDOW) {
+        window = NET_TCP_MAX_WINDOW;
+    }
+    if (socket->tcp_cwnd != 0 && window > socket->tcp_cwnd) {
+        window = socket->tcp_cwnd;
+    }
+    return window;
+}
+
+static void
+net_tcp_congestion_ack_locked(struct net_socket *socket,
+                              uint32_t acknowledged) {
+    uint32_t increase;
+    (void)acknowledged;
+    if (socket->tcp_cwnd < socket->tcp_ssthresh) {
+        increase = NET_TCP_MSS;
+    }
+    else {
+        increase = (NET_TCP_MSS * NET_TCP_MSS) /
+                   (socket->tcp_cwnd == 0 ? NET_TCP_MSS : socket->tcp_cwnd);
+        if (increase == 0) {
+            increase = 1;
+        }
+    }
+    if (socket->tcp_cwnd > NET_TCP_MAX_WINDOW - increase) {
+        socket->tcp_cwnd = NET_TCP_MAX_WINDOW;
+    }
+    else {
+        socket->tcp_cwnd += increase;
+    }
+}
+
+static void
+net_tcp_ack_segments_locked(struct net_socket *socket, uint32_t acknowledgement,
+                            size_t *acked_bytes_store) {
+    list_entry_t *entry;
+    size_t acked = 0;
+    while ((entry = list_next(&socket->tcp_tx_queue)) !=
+           &socket->tcp_tx_queue) {
+        struct net_tcp_tx_segment *segment =
+            to_struct(entry, struct net_tcp_tx_segment, link);
+        uint32_t end = segment->sequence + (uint32_t)segment->length;
+        if (end > acknowledgement) {
+            break;
+        }
+        list_del_init(entry);
+        if (socket->tcp_tx_count != 0) {
+            socket->tcp_tx_count--;
+        }
+        acked += segment->length;
+        kfree(segment);
+    }
+    if (acked_bytes_store != NULL) {
+        *acked_bytes_store = acked;
+    }
+}
+
+static struct net_tcp_tx_segment *
+net_tcp_first_tx_locked(struct net_socket *socket) {
+    list_entry_t *entry = list_next(&socket->tcp_tx_queue);
+    if (entry == &socket->tcp_tx_queue) {
+        return NULL;
+    }
+    return to_struct(entry, struct net_tcp_tx_segment, link);
+}
+
 static void
 net_send_arp_reply(const struct net_arp_packet *request,
                    const uint8_t destination_mac[NET_ETH_ADDR_LEN]) {
@@ -430,6 +499,7 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
     uint16_t source_port, destination_port;
     uint32_t source_ip, destination_ip, sequence, acknowledgement;
     uint8_t flags;
+    uint16_t window;
     const uint8_t *payload;
     size_t payload_length;
     struct net_socket *socket;
@@ -437,10 +507,12 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
     bool mark_eof = 0;
     bool queue_data = 0;
     int parse_ret;
+    size_t acknowledged_bytes = 0;
 
     parse_ret = net_parse_tcp_frame(frame, length, NET_LOCAL_IP, &source_port,
                             &destination_port, &source_ip, &destination_ip,
-                            &sequence, &acknowledgement, &flags, &payload,
+                            &sequence, &acknowledgement, &flags, &window,
+                            &payload,
                             &payload_length);
     if (parse_ret != 0) {
         return;
@@ -465,12 +537,16 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
         acknowledgement == socket->tcp_snd_nxt) {
         socket->tcp_rcv_nxt = sequence + 1;
         socket->tcp_snd_una = acknowledgement;
+        socket->tcp_snd_wnd = window == 0 ? NET_TCP_MSS : window;
+        socket->tcp_last_ack = acknowledgement;
+        socket->tcp_dup_acks = 0;
         socket->tcp_state = NET_TCP_ESTABLISHED;
         if (socket->tcp_last_tx_payload != NULL) {
             kfree(socket->tcp_last_tx_payload);
             socket->tcp_last_tx_payload = NULL;
         }
         socket->tcp_last_tx_len = 0;
+        socket->tcp_last_tx_flags = 0;
         send_ack = 1;
     }
     else if (!socket->closed &&
@@ -482,25 +558,42 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
             mark_eof = 1;
         }
         else {
-            if ((flags & NET_TCP_ACK) != 0 &&
-                acknowledgement > socket->tcp_snd_una &&
-                acknowledgement <= socket->tcp_snd_nxt) {
-                socket->tcp_snd_una = acknowledgement;
-                {
-                    uint32_t end = socket->tcp_last_tx_seq +
-                        (uint32_t)socket->tcp_last_tx_len +
-                        (((socket->tcp_last_tx_flags &
-                           (NET_TCP_SYN | NET_TCP_FIN)) != 0) ? 1U : 0U);
-                    if (socket->tcp_last_tx_len != 0 ||
-                        (socket->tcp_last_tx_flags &
-                         (NET_TCP_SYN | NET_TCP_FIN)) != 0) {
-                        if (acknowledgement >= end) {
-                            if (socket->tcp_last_tx_payload != NULL) {
-                                kfree(socket->tcp_last_tx_payload);
-                                socket->tcp_last_tx_payload = NULL;
-                            }
-                            socket->tcp_last_tx_len = 0;
-                            socket->tcp_retry_count = 0;
+            if ((flags & NET_TCP_ACK) != 0) {
+                socket->tcp_snd_wnd = window == 0 ? NET_TCP_MSS : window;
+                if (acknowledgement > socket->tcp_snd_una &&
+                    acknowledgement <= socket->tcp_snd_nxt) {
+                    socket->tcp_snd_una = acknowledgement;
+                    socket->tcp_last_ack = acknowledgement;
+                    socket->tcp_dup_acks = 0;
+                    net_tcp_ack_segments_locked(socket, acknowledgement,
+                                                &acknowledged_bytes);
+                    while (acknowledged_bytes != 0) {
+                        net_tcp_congestion_ack_locked(socket, acknowledgement);
+                        if (acknowledged_bytes > NET_TCP_MSS) {
+                            acknowledged_bytes -= NET_TCP_MSS;
+                        }
+                        else {
+                            acknowledged_bytes = 0;
+                        }
+                    }
+                }
+                else if (acknowledgement == socket->tcp_snd_una &&
+                         socket->tcp_tx_count != 0) {
+                    socket->tcp_dup_acks++;
+                    if (socket->tcp_dup_acks >= 3) {
+                        struct net_tcp_tx_segment *first =
+                            net_tcp_first_tx_locked(socket);
+                        socket->tcp_ssthresh = socket->tcp_cwnd / 2;
+                        if (socket->tcp_ssthresh < 2 * NET_TCP_MSS) {
+                            socket->tcp_ssthresh = 2 * NET_TCP_MSS;
+                        }
+                        socket->tcp_cwnd = socket->tcp_ssthresh +
+                                           3 * NET_TCP_MSS;
+                        socket->tcp_dup_acks = 0;
+                        if (first != NULL) {
+                            first->sent_tick =
+                                ticks - NET_TCP_RETRY_TICKS;
+                            first->retries = 0;
                         }
                     }
                 }
@@ -508,6 +601,9 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
             if (sequence == socket->tcp_rcv_nxt && payload_length != 0) {
                 socket->tcp_rcv_nxt += (uint32_t)payload_length;
                 queue_data = 1;
+                send_ack = 1;
+            }
+            else if (payload_length != 0) {
                 send_ack = 1;
             }
             if ((flags & NET_TCP_FIN) != 0 &&
@@ -612,10 +708,37 @@ net_tcp_retransmit(void) {
         size_t payload_length = 0;
         uint32_t sequence = 0, acknowledgement = 0;
         bool retry = 0;
+        struct net_tcp_tx_segment *first;
         spin_lock(&socket->lock);
-        if (!socket->closed && socket->tcp_last_tx_flags != 0 &&
-            (socket->tcp_state == NET_TCP_SYN_SENT ||
-             socket->tcp_state == NET_TCP_ESTABLISHED) &&
+        first = net_tcp_first_tx_locked(socket);
+        if (!socket->closed && socket->tcp_state == NET_TCP_ESTABLISHED &&
+            first != NULL && first->sent &&
+            (size_t)(ticks - first->sent_tick) >= NET_TCP_RETRY_TICKS) {
+            if (first->retries >= NET_TCP_RETRY_LIMIT) {
+                socket->tcp_ssthresh = socket->tcp_cwnd / 2;
+                if (socket->tcp_ssthresh < 2 * NET_TCP_MSS) {
+                    socket->tcp_ssthresh = 2 * NET_TCP_MSS;
+                }
+                socket->tcp_cwnd = NET_TCP_MSS;
+                first->retries = 0;
+                first->sent_tick = ticks;
+            }
+            else {
+                flags = first->flags;
+                sequence = first->sequence;
+                acknowledgement = first->acknowledgement;
+                payload_length = first->length;
+                payload = kmalloc(payload_length);
+                if (payload != NULL) {
+                    memcpy(payload, first->data, payload_length);
+                    first->retries++;
+                    first->sent_tick = ticks;
+                    retry = 1;
+                }
+            }
+        }
+        if (!retry && !socket->closed && socket->tcp_last_tx_flags != 0 &&
+            socket->tcp_state == NET_TCP_SYN_SENT &&
             (size_t)(ticks - socket->tcp_last_tx_tick) >=
                 NET_TCP_RETRY_TICKS) {
             if (socket->tcp_retry_count >= NET_TCP_RETRY_LIMIT) {
@@ -718,6 +841,14 @@ net_socket_create(int domain, int type, int protocol) {
     socket->tcp_last_tx_tick = 0;
     socket->tcp_retry_count = 0;
     socket->tcp_last_tx_payload = NULL;
+    list_init(&socket->tcp_tx_queue);
+    socket->tcp_tx_count = 0;
+    socket->tcp_snd_wnd = NET_TCP_MAX_WINDOW;
+    socket->tcp_cwnd = NET_TCP_INITIAL_CWND_SEGMENTS * NET_TCP_MSS;
+    socket->tcp_ssthresh =
+        NET_TCP_INITIAL_SSTHRESH_SEGMENTS * NET_TCP_MSS;
+    socket->tcp_last_ack = 0;
+    socket->tcp_dup_acks = 0;
     socket->closed = 0;
 
     spin_lock(&net_socket_lock);
@@ -787,6 +918,14 @@ net_socket_put(struct net_socket *socket) {
         kfree(packet);
     }
     socket->rx_count = 0;
+    while ((entry = list_next(&socket->tcp_tx_queue)) !=
+           &socket->tcp_tx_queue) {
+        struct net_tcp_tx_segment *segment =
+            to_struct(entry, struct net_tcp_tx_segment, link);
+        list_del_init(entry);
+        kfree(segment);
+    }
+    socket->tcp_tx_count = 0;
     spin_unlock(&socket->lock);
     if (socket->tcp_last_tx_payload != NULL) {
         kfree(socket->tcp_last_tx_payload);
@@ -1076,33 +1215,81 @@ net_socket_send(struct net_socket *socket, const void *data, size_t length) {
         return -E_INVAL;
     }
     if (socket->type == SOCK_STREAM) {
+        size_t wait_start = ticks;
         if (data == NULL || length == 0) {
             return -E_INVAL;
         }
         while (offset < length) {
             size_t chunk = length - offset;
             uint32_t sequence, acknowledgement;
+            struct net_tcp_tx_segment *segment;
             if (chunk > NET_TCP_MSS) {
                 chunk = NET_TCP_MSS;
             }
+            segment = kmalloc(sizeof(*segment) + chunk - 1);
+            if (segment == NULL) {
+                return offset != 0 ? (int)offset : -E_NO_MEM;
+            }
+            memcpy(segment->data, (const uint8_t *)data + offset, chunk);
+            list_init(&segment->link);
+            segment->length = chunk;
+            segment->flags = NET_TCP_ACK | NET_TCP_PSH;
+            segment->sent = 0;
+            segment->sent_tick = 0;
+            segment->retries = 0;
             spin_lock(&socket->lock);
             if (socket->closed || socket->tcp_state != NET_TCP_ESTABLISHED) {
                 spin_unlock(&socket->lock);
+                kfree(segment);
                 return offset != 0 ? (int)offset : -E_BAD_PROC;
+            }
+            if (socket->tcp_snd_wnd == 0) {
+                spin_unlock(&socket->lock);
+                kfree(segment);
+                net_poll();
+                if ((size_t)(ticks - wait_start) >= NET_TCP_CONNECT_TIMEOUT) {
+                    return offset != 0 ? (int)offset : -E_TIMEOUT;
+                }
+                asm volatile ("pause");
+                continue;
+            }
+            {
+                uint32_t inflight = socket->tcp_snd_nxt - socket->tcp_snd_una;
+                uint32_t available = net_tcp_window_locked(socket);
+                if (available <= inflight) {
+                    spin_unlock(&socket->lock);
+                    kfree(segment);
+                    net_poll();
+                    if ((size_t)(ticks - wait_start) >=
+                        NET_TCP_CONNECT_TIMEOUT) {
+                        return offset != 0 ? (int)offset : -E_TIMEOUT;
+                    }
+                    asm volatile ("pause");
+                    continue;
+                }
+                if (chunk > available - inflight) {
+                    chunk = available - inflight;
+                    segment->length = chunk;
+                }
             }
             sequence = socket->tcp_snd_nxt;
             acknowledgement = socket->tcp_rcv_nxt;
+            segment->sequence = sequence;
+            segment->acknowledgement = acknowledgement;
             socket->tcp_snd_nxt += (uint32_t)chunk;
+            list_add_before(&socket->tcp_tx_queue, &segment->link);
+            socket->tcp_tx_count++;
+            segment->sent = 1;
+            segment->sent_tick = ticks;
             spin_unlock(&socket->lock);
             if (net_tcp_send_segment(socket, NET_TCP_ACK | NET_TCP_PSH,
                                      sequence, acknowledgement,
-                                     (const uint8_t *)data + offset,
+                                     segment->data,
                                      chunk) < 0) {
+                /* Leave the segment queued so the bounded retransmission
+                 * path can recover a transient device/ARP failure. */
                 return offset != 0 ? (int)offset : -E_NA_DEV;
             }
-            net_tcp_record_tx(socket, NET_TCP_ACK | NET_TCP_PSH,
-                              sequence, acknowledgement,
-                              (const uint8_t *)data + offset, chunk);
             offset += chunk;
         }
         return (int)offset;
@@ -1252,7 +1439,9 @@ net_socket_poll(struct net_socket *socket, int16_t events,
             revents |= POLLIN;
         }
         if ((events & POLLOUT) != 0 &&
-            socket->tcp_state == NET_TCP_ESTABLISHED) {
+            socket->tcp_state == NET_TCP_ESTABLISHED &&
+            net_tcp_window_locked(socket) >
+                socket->tcp_snd_nxt - socket->tcp_snd_una) {
             revents |= POLLOUT;
         }
     }

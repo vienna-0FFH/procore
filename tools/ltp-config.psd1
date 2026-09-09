@@ -8,6 +8,8 @@
     QemuGuestUdpPort = 9100
     QemuHostHttp = $false
     QemuHostHttpPort = 18080
+    QemuHostTcpEcho = $false
+    QemuHostTcpEchoPort = 18081
     BuildTimeoutSeconds = 180
     QemuTimeoutSeconds = 45
 
@@ -24,6 +26,7 @@
         'vfstest',
         'nettest',
         'netconnecttest',
+        'tcpwindowtest',
         'affinitytest',
         'schedtest',
         'cowtest',

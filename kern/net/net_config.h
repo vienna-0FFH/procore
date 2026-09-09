@@ -88,6 +88,22 @@
 #define NET_TCP_RETRY_LIMIT           3U
 #endif
 
+#ifndef NET_TCP_INITIAL_CWND_SEGMENTS
+#define NET_TCP_INITIAL_CWND_SEGMENTS 2U
+#endif
+
+#ifndef NET_TCP_INITIAL_SSTHRESH_SEGMENTS
+#define NET_TCP_INITIAL_SSTHRESH_SEGMENTS 16U
+#endif
+
+#ifndef NET_TCP_MAX_WINDOW
+#define NET_TCP_MAX_WINDOW            65535U
+#endif
+
+#ifndef NET_TCP_MAX_WRITE
+#define NET_TCP_MAX_WRITE             262144U
+#endif
+
 #if NET_MAX_SOCKETS < 1
 #error "NET_MAX_SOCKETS must be positive"
 #endif
@@ -126,6 +142,16 @@
 #endif
 #if NET_TCP_RETRY_TICKS < 1 || NET_TCP_RETRY_LIMIT < 1
 #error "TCP retry policy must be positive"
+#endif
+#if NET_TCP_INITIAL_CWND_SEGMENTS < 1 || \
+    NET_TCP_INITIAL_SSTHRESH_SEGMENTS < NET_TCP_INITIAL_CWND_SEGMENTS
+#error "invalid TCP congestion window policy"
+#endif
+#if NET_TCP_MAX_WINDOW < NET_TCP_MSS
+#error "TCP maximum window must fit one MSS"
+#endif
+#if NET_TCP_MAX_WRITE < NET_TCP_MSS
+#error "TCP maximum write must fit one MSS"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */

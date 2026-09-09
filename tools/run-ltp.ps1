@@ -6,6 +6,7 @@ param(
     [int]$QemuSmp = 0,
     [switch]$QemuUserNet,
     [switch]$QemuHostHttp,
+    [switch]$QemuHostTcpEcho,
     [string]$QemuPath = '',
     [string]$TccSource = 'user/hello.c',
     [string]$TccName = 'hello',
@@ -51,6 +52,10 @@ $UseQemuHostHttp = $QemuHostHttp.IsPresent -or [bool]$Config.QemuHostHttp
 $QemuHostHttpPort = if ($Config.QemuHostHttpPort) {
     [int]$Config.QemuHostHttpPort
 } else { 18080 }
+$UseQemuHostTcpEcho = $QemuHostTcpEcho.IsPresent -or [bool]$Config.QemuHostTcpEcho
+$QemuHostTcpEchoPort = if ($Config.QemuHostTcpEchoPort) {
+    [int]$Config.QemuHostTcpEchoPort
+} else { 18081 }
 $Qemu = if (-not [string]::IsNullOrWhiteSpace($QemuPath)) {
     $QemuPath
 } elseif (-not [string]::IsNullOrWhiteSpace($env:UCORE_QEMU)) {
@@ -152,6 +157,7 @@ foreach ($Test in $Tests) {
     $buildProcess = $null
     $qemuProcess = $null
     $httpProcess = $null
+    $tcpEchoProcess = $null
     $buildOk = $false
     $qemuOk = $false
     $status = 'FAIL'
@@ -215,6 +221,18 @@ foreach ($Test in $Tests) {
                 throw "host HTTP server did not listen on port $QemuHostHttpPort"
             }
         }
+        if ($UseQemuHostTcpEcho -and $Test -eq 'tcpwindowtest') {
+            $echoScript = Join-Path $Project 'tools\tcp-echo-test.py'
+            $tcpEchoProcess = Start-Process -FilePath 'python' `
+                -ArgumentList @($echoScript, "$QemuHostTcpEchoPort") `
+                -WorkingDirectory $Project -RedirectStandardOutput `
+                (Join-Path $LogDir "$Test-$stamp-echo.out") `
+                -RedirectStandardError (Join-Path $LogDir "$Test-$stamp-echo.err") `
+                -PassThru -WindowStyle Hidden
+            if (-not (Wait-HostTcpPort $QemuHostTcpEchoPort 5000)) {
+                throw "host TCP echo server did not listen on port $QemuHostTcpEchoPort"
+            }
+        }
 
         $qemuArgs = @(
             '-display', 'none', '-monitor', 'none', '-no-reboot', '-snapshot',
@@ -225,9 +243,11 @@ foreach ($Test in $Tests) {
             '-drive', "format=raw,file=$NativeBin\sfs.img,media=disk,cache=writeback"
         )
         if ($UseQemuUserNet) {
+            $netdev = "user,id=net0,hostfwd=udp:127.0.0.1:{0}-10.0.2.15:{1}" -f
+                $QemuHostUdpPort, $QemuGuestUdpPort
             $qemuArgs += @(
                 '-net', 'none',
-                '-netdev', "user,id=net0,hostfwd=udp:127.0.0.1:$QemuHostUdpPort-10.0.2.15:$QemuGuestUdpPort",
+                '-netdev', $netdev,
                 '-device', 'e1000,netdev=net0'
             )
         }
@@ -281,6 +301,7 @@ foreach ($Test in $Tests) {
     } finally {
         Stop-ProcessTree $qemuProcess
         Stop-ProcessTree $httpProcess
+        Stop-ProcessTree $tcpEchoProcess
         Stop-ProcessTree $buildProcess
     }
 

@@ -504,7 +504,7 @@ sys_send(uint32_t arg[]) {
     void *buffer;
     size_t length = (size_t)arg[2];
     int ret;
-    if (mm == NULL || length == 0 || length > NET_MAX_DATAGRAM) {
+    if (mm == NULL || length == 0 || length > NET_TCP_MAX_WRITE) {
         return -E_INVAL;
     }
     if ((buffer = kmalloc(length)) == NULL) {
