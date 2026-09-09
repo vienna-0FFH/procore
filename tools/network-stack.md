@@ -10,8 +10,9 @@ The current network path is layered so each stage can be tested independently:
 | User-space DNS A resolver | implemented | `dnstest` |
 | Active TCP client | implemented | `httpget` |
 | TCP send window, slow start, congestion avoidance, duplicate-ACK recovery | implemented | `tcpwindowtest` |
-| TCP listen/accept and congestion control | planned | not exposed yet |
-| TLS/HTTPS | planned | requires a TLS library and certificate/time policy |
+| TCP listen/accept | planned | not exposed yet |
+| TLS 1.2 client with X.509 verification | implemented for bundled test CA | `httpsget` |
+| Public-root HTTPS trust store and clock policy | planned | external sites need bundled roots and valid time |
 
 The TCP implementation follows the wire-level behavior used by Linux and
 ReactOS (network-order headers, three-way handshake, sequence/acknowledgement
@@ -39,5 +40,6 @@ the runner after QEMU exits.
 
 For a real name-based request from the shell, the image also contains
 `/webget`: `/webget example.com /`. It resolves the A record through the
-QEMU DNS proxy and then uses TCP port 80. HTTPS still needs the TLS milestone
-described above.
+QEMU DNS proxy and then uses TCP port 80. The bundled `/httpsget` test uses
+the same TCP path with a locally trusted TLS 1.2 certificate; public-root
+verification and a valid wall clock are separate configuration work.

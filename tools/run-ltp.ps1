@@ -7,6 +7,7 @@ param(
     [switch]$QemuUserNet,
     [switch]$QemuHostHttp,
     [switch]$QemuHostTcpEcho,
+    [switch]$QemuHostHttps,
     [string]$QemuPath = '',
     [string]$TccSource = 'user/hello.c',
     [string]$TccName = 'hello',
@@ -56,6 +57,10 @@ $UseQemuHostTcpEcho = $QemuHostTcpEcho.IsPresent -or [bool]$Config.QemuHostTcpEc
 $QemuHostTcpEchoPort = if ($Config.QemuHostTcpEchoPort) {
     [int]$Config.QemuHostTcpEchoPort
 } else { 18081 }
+$UseQemuHostHttps = $QemuHostHttps.IsPresent -or [bool]$Config.QemuHostHttps
+$QemuHostHttpsPort = if ($Config.QemuHostHttpsPort) {
+    [int]$Config.QemuHostHttpsPort
+} else { 18443 }
 $Qemu = if (-not [string]::IsNullOrWhiteSpace($QemuPath)) {
     $QemuPath
 } elseif (-not [string]::IsNullOrWhiteSpace($env:UCORE_QEMU)) {
@@ -158,6 +163,7 @@ foreach ($Test in $Tests) {
     $qemuProcess = $null
     $httpProcess = $null
     $tcpEchoProcess = $null
+    $httpsProcess = $null
     $buildOk = $false
     $qemuOk = $false
     $status = 'FAIL'
@@ -165,6 +171,9 @@ foreach ($Test in $Tests) {
 
     try {
         $buildArgs = @("DEFS+=-DTEST=$Test")
+        if ($UseQemuHostHttps -and $Test -eq 'httpsget') {
+            $buildArgs += 'DEFS+=-DHTTPS_TEST_LOCAL'
+        }
         if ($Test -eq 'tcc_elf') {
             $buildArgs += @("TCC_ELF=$TccElfRelative", 'TCC_ELF_NAME=tcc-program')
         }
@@ -231,6 +240,18 @@ foreach ($Test in $Tests) {
                 -PassThru -WindowStyle Hidden
             if (-not (Wait-HostTcpPort $QemuHostTcpEchoPort 5000)) {
                 throw "host TCP echo server did not listen on port $QemuHostTcpEchoPort"
+            }
+        }
+        if ($UseQemuHostHttps -and $Test -eq 'httpsget') {
+            $httpsScript = Join-Path $Project 'tools\https-test-server.py'
+            $httpsProcess = Start-Process -FilePath 'python' `
+                -ArgumentList @($httpsScript, "$QemuHostHttpsPort") `
+                -WorkingDirectory $Project -RedirectStandardOutput `
+                (Join-Path $LogDir "$Test-$stamp-https.out") `
+                -RedirectStandardError (Join-Path $LogDir "$Test-$stamp-https.err") `
+                -PassThru -WindowStyle Hidden
+            if (-not (Wait-HostTcpPort $QemuHostHttpsPort 5000)) {
+                throw "host HTTPS server did not listen on port $QemuHostHttpsPort"
             }
         }
 
@@ -302,6 +323,7 @@ foreach ($Test in $Tests) {
         Stop-ProcessTree $qemuProcess
         Stop-ProcessTree $httpProcess
         Stop-ProcessTree $tcpEchoProcess
+        Stop-ProcessTree $httpsProcess
         Stop-ProcessTree $buildProcess
     }
 

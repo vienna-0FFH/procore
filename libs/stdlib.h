@@ -3,6 +3,11 @@
 
 #include <defs.h>
 
+void *malloc(size_t size);
+void *calloc(size_t count, size_t size);
+void free(void *ptr);
+void abort(void) __attribute__((noreturn));
+
 /* the largest number rand will return */
 #define RAND_MAX    2147483647UL
 
@@ -14,4 +19,3 @@ void srand(unsigned int seed);
 uint32_t hash32(uint32_t val, unsigned int bits);
 
 #endif /* !__LIBS_RAND_H__ */
-

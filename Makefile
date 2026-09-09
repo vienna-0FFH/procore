@@ -135,6 +135,8 @@ USER_BINS	:=
 $(call add_files_cc,$(call listf_cc,$(ULIBDIR)),ulibs,$(UCFLAGS))
 TCC_USER_SOURCE := user/tcc.c
 USER_SOURCE_FILES := $(filter-out $(TCC_USER_SOURCE),$(call listf_cc,$(USRCDIR)))
+HTTPS_USER_SOURCE := user/httpsget.c
+USER_SOURCE_FILES := $(filter-out $(HTTPS_USER_SOURCE),$(USER_SOURCE_FILES))
 $(call add_files_cc,$(USER_SOURCE_FILES),uprog,$(UCFLAGS))
 
 UOBJS	:= $(call read_packet,ulibs libs)
@@ -145,6 +147,27 @@ UOBJS	:= $(call read_packet,ulibs libs)
 TCC_OBJ := $(OBJDIR)/tcc/tcc.o
 TCC_LIBTCC1_OBJ := $(OBJDIR)/tcc/libtcc1.o
 TCC_BIN := $(BINDIR)/tcc
+
+# mbedTLS is kept outside the ordinary user-library packet.  Linking it into
+# every program would inflate all images; only the HTTPS client target below
+# consumes these objects.  ReactOS's portable client sources are used with
+# uCore's allocator, string, and socket callbacks.
+MBEDTLS_SOURCES := $(filter-out user/mbedtls/src/entropy_poll.c user/mbedtls/src/timing.c,$(wildcard user/mbedtls/src/*.c))
+$(call add_files_cc,$(MBEDTLS_SOURCES),mbedtls,-Iuser/mbedtls/include -Iuser/mbedtls/include/mbedtls)
+MBEDTLS_OBJS := $(call read_packet,mbedtls)
+HTTPS_OBJ := $(OBJDIR)/httpsget.o
+HTTPS_BIN := $(BINDIR)/httpsget
+
+$(HTTPS_OBJ): $(HTTPS_USER_SOURCE) | $(OBJDIR)
+	@echo + cc $< HTTPS
+	$(V)$(CC) $(UCFLAGS) $(CFLAGS) -Iuser/mbedtls/include -Iuser/mbedtls/include/mbedtls -c $< -o $@
+
+$(HTTPS_BIN): $(HTTPS_OBJ) $(MBEDTLS_OBJS) $(UOBJS) $(TCC_LIBTCC1_OBJ) target/native/compat/user.ld | $(BINDIR)
+	@echo + ld $@ HTTPS
+	$(V)$(LD) $(LDFLAGS) -T target/native/compat/user.ld -o $@ $(UOBJS) $(TCC_LIBTCC1_OBJ) $(MBEDTLS_OBJS) $(HTTPS_OBJ)
+
+TARGETS += $(HTTPS_BIN)
+USER_BINS += $(HTTPS_BIN)
 
 $(OBJDIR)/tcc:
 	@$(MKDIR) $@
@@ -296,6 +319,12 @@ SFSIMG		:= $(call totarget,sfs.img)
 SFSBINS		:=
 SFSROOT		:= disk0
 SFS_SOURCE_DIR	:= $(SFSROOT)/src
+
+HTTPS_CA_SOURCE := tools/https-test-root/server.crt
+HTTPS_CA_TARGET := $(SFSROOT)/https-test-root.crt
+$(HTTPS_CA_TARGET): $(HTTPS_CA_SOURCE) | $(SFSROOT)
+	@$(COPY) $< $@
+SFSBINS += $(HTTPS_CA_TARGET)
 
 # Runtime objects and headers consumed by TinyCC after uCore boots.
 TCC_SFS_BIN := $(SFSROOT)/bin/tcc

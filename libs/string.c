@@ -162,6 +162,22 @@ strchr(const char *s, char c) {
 }
 
 char *
+strstr(const char *haystack, const char *needle) {
+    size_t needle_len;
+    if (needle == NULL || *needle == '\0') {
+        return (char *)haystack;
+    }
+    needle_len = strlen(needle);
+    while (*haystack != '\0') {
+        if (strncmp(haystack, needle, needle_len) == 0) {
+            return (char *)haystack;
+        }
+        haystack++;
+    }
+    return NULL;
+}
+
+char *
 strrchr(const char *s, int c) {
     const char *last = NULL;
     do {

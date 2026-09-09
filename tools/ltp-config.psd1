@@ -10,6 +10,8 @@
     QemuHostHttpPort = 18080
     QemuHostTcpEcho = $false
     QemuHostTcpEchoPort = 18081
+    QemuHostHttps = $false
+    QemuHostHttpsPort = 18443
     BuildTimeoutSeconds = 180
     QemuTimeoutSeconds = 45
 
