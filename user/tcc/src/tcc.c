@@ -297,6 +297,8 @@ static int ucore_add_runtime(TCCState *s)
         UCORE_TCC_RUNTIME_DIR "/initcode.o",
         UCORE_TCC_RUNTIME_DIR "/umain.o",
         UCORE_TCC_RUNTIME_DIR "/syscall.o",
+        UCORE_TCC_RUNTIME_DIR "/signal.o",
+        UCORE_TCC_RUNTIME_DIR "/signal_trampoline.o",
         UCORE_TCC_RUNTIME_DIR "/ulib.o",
         UCORE_TCC_RUNTIME_DIR "/panic.o",
         UCORE_TCC_RUNTIME_DIR "/file.o",

@@ -50,6 +50,10 @@
 #define SYS_listen          150
 #define SYS_accept          151
 #define SYS_shutdown        152
+#define SYS_raise           153
+#define SYS_sigaction       154
+#define SYS_sigprocmask     155
+#define SYS_sigreturn       156
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -167,6 +171,42 @@ struct pollfd {
 #define IPPROTO_TCP         6
 #define INADDR_ANY          0U
 #define INADDR_LOOPBACK     0x0100007FU
+
+/* First-phase standard signal ABI. */
+#define SIGHUP              1
+#define SIGINT              2
+#define SIGQUIT             3
+#define SIGILL              4
+#define SIGTRAP             5
+#define SIGABRT             6
+#define SIGFPE              8
+#define SIGUSR1            10
+#define SIGKILL             9
+#define SIGSEGV            11
+#define SIGPIPE            13
+#define SIGALRM            14
+#define SIGTERM            15
+#define SIGCHLD            17
+#define SIGCONT            18
+#define SIGSTOP            19
+#define SIGTSTP            20
+#define UCORE_NSIG         32
+
+#define SIG_DFL             0U
+#define SIG_IGN             1U
+#define SIG_BLOCK           0
+#define SIG_UNBLOCK         1
+#define SIG_SETMASK         2
+#define SA_RESTART          0x00000001U
+
+typedef uint32_t sigset_t;
+
+struct sigaction {
+    uintptr_t sa_handler;
+    uintptr_t sa_restorer;
+    uint32_t sa_flags;
+    sigset_t sa_mask;
+};
 
 struct sockaddr_in {
     uint16_t sin_family;

@@ -6,6 +6,7 @@
 #include <trap.h>
 #include <memlayout.h>
 #include <skew_heap.h>
+#include <signal.h>
 
 struct proc_struct;
 struct proc_struct **smp_current_ptr(void);
@@ -17,6 +18,7 @@ enum proc_state {
     PROC_UNINIT = 0,  // uninitialized
     PROC_SLEEPING,    // sleeping
     PROC_RUNNABLE,    // runnable(maybe running)
+    PROC_STOPPED,     // stopped by SIGSTOP until SIGCONT
     PROC_ZOMBIE,      // almost dead, and wait parent proc to reclaim his resource
 };
 
@@ -75,6 +77,7 @@ struct proc_struct {
     uint32_t lab6_stride;                       // process scheduler state: the current stride of the process
     uint32_t lab6_priority;                     // process scheduler state: the priority of process, set by lab6_set_priority(uint32_t)
     struct files_struct *filesp;                // the file related info(pwd, files_count, files_array, fs_semaphore) of process
+    struct signal_state signal;                 // pending/disposition state
 };
 
 #define PF_EXITING                  0x00000001      // getting shutdown
@@ -89,6 +92,7 @@ struct proc_struct {
     to_struct((le), struct proc_struct, member)
 
 extern struct proc_struct *initproc;
+extern spinlock_t proc_lock;
 
 /* These names remain source-compatible while resolving to the local CPU. */
 #define current (*smp_current_ptr())
@@ -112,6 +116,7 @@ int do_yield(void);
 int do_execve(const char *name, int argc, const char **argv);
 int do_wait(int pid, int *code_store);
 int do_kill(int pid);
+int do_kill_signal(int pid, int signo);
 int do_setaffinity(int pid, uint32_t mask);
 int do_getaffinity(int pid, uint32_t *mask_store);
 //Set process scheduling priority (bigger value will get more CPU time)

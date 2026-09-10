@@ -35,6 +35,10 @@ The current initial subset maps these LTP themes:
 | uCore test | LTP-style area | Covered behavior |
 | --- | --- | --- |
 | `hello` | process baseline | exec, user entry, clean exit |
+| `signalchldtest`, `signalproctest` | signals and `waitpid` | caught `SIGCHLD`/`SIGUSR1`, deferred delivery, and `EINTR` |
+| `signalmasktest` | signal masks | block/unblock, pending delivery, and uncatchable signals |
+| `signaldefaulttest`, `signalstoptest` | default actions/job control | default termination plus `SIGSTOP`/`SIGCONT` |
+| `signalpipetest` | `SIGPIPE` | broken pipe default action |
 | `chdirtest` | `chdir`, `dup`, `lseek` | VFS cwd and shared open-file offset |
 | `clonetest` | `clone`, `gettid`, `getppid`, `getcpu` | shared address space/thread entry |
 | `mmaptest` | `mmap`, `munmap`, `brk` | anonymous mappings and heap boundary |
@@ -50,14 +54,18 @@ The current initial subset maps these LTP themes:
 | `tcc_elf` | hosted TinyCC native path | compile an original user source to ELF32, then execute it in uCore |
 | `tcc_run` | in-uCore TinyCC | compile an SFS C source to a static ELF from inside uCore, then execute it |
 
-The latest complete uCore run used the configured four-vCPU QEMU topology
-(`tools/ltp-config.psd1`, `QemuSmp = 4`) and finished on 2026-09-08. All
-fourteen configured programs built successfully, reached their result marker,
-and returned status 0:
+The latest verification used the configured four-vCPU QEMU topology
+(`tools/ltp-config.psd1`, `QemuSmp = 4`) on 2026-09-10. Each configured
+program built successfully and was verified individually with the result
+marker and `status=0`; the signal-specific programs are included in the
+current configuration and are listed above. One long default batch observed a
+single unrepeatable COW assertion failure; four repeated `cowtest` runs and a
+`cowstress` run passed afterward, so it is recorded as residual scheduling
+stress rather than a confirmed deterministic failure.
 
 | uCore runner result | Tests |
 | --- | --- |
-| `PASS` (14/14) | `hello`, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `vfstest`, `nettest`, `affinitytest`, `schedtest`, `cowtest`, `c4`, `tcc_run`, `ltp_legacy`, `elfgen` |
+| `PASS` | `hello`, signal tests, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `pipetest`, `polltest`, `vfstest`, local network tests, `affinitytest`, `schedtest`, `cowtest`, `c4`, `tcc_run`, `ltp_legacy`, `elfgen` |
 
 The machine-readable record is `target/native/ltp/summary.csv`; serial logs are
 kept beside it. These are uCore/QEMU results, not upstream Linux LTP results.
@@ -73,10 +81,17 @@ run individually on the same four-vCPU topology:
 | `elfgen` | `PASS` | generated ELF32 executed and returned status 0 |
 
 Their implementation and provenance are documented in `tools/compiler-port.md`
-and `tools/ltp-legacy.md`. The configured list contains all fourteen entries
-shown above.
+and `tools/ltp-legacy.md`. The editable runner configuration contains the
+signal coverage and deterministic local tests shown above. TCP tests that
+contact the host are enabled explicitly with the runner's host-service
+switches, for example:
 
-Upstream cases that depend on Linux-only facilities such as `/proc`, signals,
+```powershell
+& '.\tools\run-ltp.ps1' -Tests tcpwindowtest -QemuUserNet -QemuHostTcpEcho
+```
+
+Upstream cases that depend on Linux-only facilities such as `/proc`, advanced
+signal queues and job-control details,
 ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
 `NOT_IMPL` until uCore grows the corresponding subsystem. They should not be
 reported as upstream-LTP passes merely because a similarly named uCore test
@@ -201,15 +216,17 @@ binary can execute on uCore.
 | `getpid`, `getppid`, `gettid` | range/parent relationship and single-thread tid equality | `PASS` for the supported semantics | `clonetest`, `hello` |
 | `getcpu`, `sched_setaffinity` | set an allowed CPU, query current CPU, reject invalid masks | `PASS` for the supported mask/counter ABI | `affinitytest`, `schedtest` |
 | `brk` | grow/shrink break and touch newly allocated pages | `PASS` for anonymous heap semantics | `mmaptest` |
-| `mmap`, `munmap` | anonymous mappings, page alignment, partial unmap and fault behavior | `PASS` for anonymous subset; file-backed and signal-fault cases are not implemented | `mmaptest` |
+| `mmap`, `munmap` | anonymous mappings, page alignment, partial unmap and fault behavior | `PASS` for anonymous subset; file-backed mappings are not implemented | `mmaptest` |
 | `chdir` | directory, missing path, permissions, symlink-loop cases | `PORT`/`PASS` for uCore VFS subset; permissions/symlink cases `NOT_IMPL` | `chdirtest`, `vfstest` |
 | `open`, `close`, `read`, `write`, `fstat` | descriptor errors, data transfer, metadata and lifecycle | `PASS` for supported SFS/device subset | `vfstest`, `fdsharetest` |
 | `dup`, `dup2`, `lseek` | invalid descriptors, replacement, self-dup, shared offset | `PASS` for the implemented descriptor-description model | `chdirtest`, `fdsharetest` |
 | `fork`, `clone`, `wait`, `waitpid` | child lifecycle, clone entry, parent wait and status | `PASS` for uCore's supported flags and status ABI | `clonetest`, `fdsharetest` |
 | `socket`, UDP send/receive | invalid domain/type cases plus datagram loopback | `PASS` for AF_INET/SOCK_DGRAM; TCP/UNIX/raw cases `NOT_IMPL` | `nettest` |
+| `raise`, `kill`, `sigaction`, `sigprocmask`, `sigreturn` | pending delivery, handler return, masks, default actions, stop/continue, `SIGCHLD`, `SIGPIPE` | `PASS` for the first-phase process-directed ABI; realtime queues, timers, and signalfd are not implemented | signal tests |
 
 The following upstream families deliberately remain outside the current uCore
-claim: `openat*`, `dup3`, `close_range`, `readv/writev`, signals, `execveat`,
+claim: `openat*`, `dup3`, `close_range`, `readv/writev`, advanced Linux signal
+queue/timer APIs, `execveat`,
 `/proc` and `/sys` inspection, user/group privilege transitions, namespaces,
 futexes, epoll, io_uring, filesystem mounts, and file-backed mmap. They need
 new ABI and kernel subsystems before a faithful port can be made.

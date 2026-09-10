@@ -64,11 +64,6 @@ yield(void) {
 }
 
 int
-kill(int pid) {
-    return sys_kill(pid);
-}
-
-int
 getpid(void) {
     return sys_getpid();
 }

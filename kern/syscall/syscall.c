@@ -92,7 +92,104 @@ sys_yield(uint32_t arg[]) {
 static int
 sys_kill(uint32_t arg[]) {
     int pid = (int)arg[0];
-    return do_kill(pid);
+    return do_kill_signal(pid, (int)arg[1]);
+}
+
+static int
+sys_raise(uint32_t arg[]) {
+    return signal_queue(current, (int)arg[0]);
+}
+
+static int
+sys_sigaction(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sigaction action;
+    struct sigaction old_action;
+    int signo = (int)arg[0];
+    int ret;
+
+    if (mm == NULL || signo <= 0 || signo >= UCORE_NSIG) {
+        return -E_INVAL;
+    }
+    if (arg[1] != 0) {
+        lock_mm(mm);
+        ret = copy_from_user(mm, &action, (void *)arg[1],
+                             sizeof(action), 0);
+        unlock_mm(mm);
+        if (!ret) {
+            return -E_INVAL;
+        }
+        if (action.sa_handler != SIG_DFL && action.sa_handler != SIG_IGN) {
+            lock_mm(mm);
+            ret = user_mem_check(mm, action.sa_handler, 1, 0) &&
+                  action.sa_restorer != 0 &&
+                  user_mem_check(mm, action.sa_restorer, 1, 0);
+            unlock_mm(mm);
+            if (!ret) {
+                return -E_INVAL;
+            }
+        }
+    }
+    ret = signal_exchange_action(current, signo,
+                                 arg[1] != 0 ? &action : NULL,
+                                 arg[2] != 0 ? &old_action : NULL);
+    if (ret != 0) {
+        return ret;
+    }
+    if (arg[2] != 0) {
+        lock_mm(mm);
+        ret = copy_to_user(mm, (void *)arg[2], &old_action,
+                           sizeof(old_action));
+        unlock_mm(mm);
+        if (!ret) {
+            return -E_INVAL;
+        }
+    }
+    return 0;
+}
+
+static int
+sys_sigprocmask(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    sigset_t set;
+    sigset_t old_set;
+    int ret;
+
+    if (mm == NULL ||
+        (int)arg[0] != SIG_BLOCK && (int)arg[0] != SIG_UNBLOCK &&
+        (int)arg[0] != SIG_SETMASK) {
+        return -E_INVAL;
+    }
+    ret = signal_get_mask(current, &old_set);
+    if (ret != 0) {
+        return ret;
+    }
+    if (arg[1] != 0) {
+        lock_mm(mm);
+        ret = copy_from_user(mm, &set, (void *)arg[1], sizeof(set), 0);
+        unlock_mm(mm);
+        if (!ret) {
+            return -E_INVAL;
+        }
+        ret = signal_set_mask(current, (int)arg[0], set);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+    if (arg[2] != 0) {
+        lock_mm(mm);
+        ret = copy_to_user(mm, (void *)arg[2], &old_set, sizeof(old_set));
+        unlock_mm(mm);
+        if (!ret) {
+            return -E_INVAL;
+        }
+    }
+    return 0;
+}
+
+static int
+sys_sigreturn(uint32_t arg[]) {
+    return signal_sigreturn();
 }
 
 static int
@@ -678,7 +775,10 @@ sys_poll(uint32_t arg[]) {
             ret = 0;
             break;
         }
-        do_sleep(1);
+        if (do_sleep(1) == -E_INTR) {
+            ret = -E_INTR;
+            break;
+        }
     }
     if (count != 0) {
         lock_mm(mm);
@@ -699,6 +799,10 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_exec]              sys_exec,
     [SYS_yield]             sys_yield,
     [SYS_kill]              sys_kill,
+    [SYS_raise]             sys_raise,
+    [SYS_sigaction]         sys_sigaction,
+    [SYS_sigprocmask]       sys_sigprocmask,
+    [SYS_sigreturn]         sys_sigreturn,
     [SYS_getpid]            sys_getpid,
     [SYS_getppid]           sys_getppid,
     [SYS_gettid]            sys_gettid,
@@ -762,7 +866,15 @@ syscall(void) {
             arg[2] = tf->tf_regs.reg_ebx;
             arg[3] = tf->tf_regs.reg_edi;
             arg[4] = tf->tf_regs.reg_esi;
-            tf->tf_regs.reg_eax = syscalls[num](arg);
+            {
+                int ret = syscalls[num](arg);
+                /* sigreturn replaces the entire saved trap frame. Writing a
+                 * normal syscall return value afterward would overwrite the
+                 * restored user EAX and resume at the wrong ABI state. */
+                if (num != SYS_sigreturn) {
+                    tf->tf_regs.reg_eax = ret;
+                }
+            }
             return ;
         }
     }

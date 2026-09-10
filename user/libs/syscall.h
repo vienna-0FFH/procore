@@ -10,7 +10,12 @@ int sys_clone(uint32_t clone_flags, void *child_stack,
 int sys_wait(int pid, int *store);
 int sys_exec(const char *name, int argc, const char **argv);
 int sys_yield(void);
-int sys_kill(int pid);
+int sys_kill(int pid, int signo);
+int sys_raise(int signo);
+int sys_sigaction(int signo, const struct sigaction *action,
+                  struct sigaction *old_action);
+int sys_sigprocmask(int how, const sigset_t *set, sigset_t *old_set);
+int sys_sigreturn(void);
 int sys_getpid(void);
 int sys_getppid(void);
 int sys_gettid(void);

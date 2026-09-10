@@ -13,7 +13,10 @@ typedef struct {
 
 void sem_init(semaphore_t *sem, int value);
 void up(semaphore_t *sem);
+void sem_wake_event(semaphore_t *sem);
+void sem_wake_all(semaphore_t *sem);
 void down(semaphore_t *sem);
+int down_interruptible(semaphore_t *sem);
 bool try_down(semaphore_t *sem);
 
 #endif /* !__KERN_SYNC_SEM_H__ */

@@ -39,6 +39,7 @@ static const char * const error_string[MAXERROR + 1] = {
     [E_EXISTS]              "file or directory already exists",
     [E_NOTEMPTY]            "directory is not empty",
     [E_PIPE]                "broken pipe",
+    [E_INTR]                "interrupted system call",
 };
 
 /* *

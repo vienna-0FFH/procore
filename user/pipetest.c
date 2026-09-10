@@ -1,5 +1,6 @@
 #include <error.h>
 #include <file.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <ulib.h>
@@ -15,6 +16,14 @@ main(void) {
     char buffer[128];
     static char payload[PIPE_STRESS_BYTES];
     int i;
+    struct sigaction pipe_action;
+
+    /* The write-after-close assertion below is checking EPIPE itself.  A
+     * POSIX process must ignore SIGPIPE when it wants to observe that error
+     * instead of taking the default termination action. */
+    memset(&pipe_action, 0, sizeof(pipe_action));
+    pipe_action.sa_handler = SIG_IGN;
+    assert(sigaction(SIGPIPE, &pipe_action, NULL) == 0);
 
     assert(pipe(fds) == 0 && fds[0] >= 0 && fds[1] >= 0);
     assert(write(fds[1], small, sizeof(small)) == sizeof(small));

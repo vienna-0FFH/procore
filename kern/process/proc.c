@@ -135,6 +135,7 @@ alloc_proc(void) {
         proc->lab6_stride = 0;
         proc->lab6_priority = 0;
         proc->filesp = NULL;
+        signal_state_init(&proc->signal);
     }
     return proc;
 }
@@ -574,6 +575,7 @@ do_fork_with_entry(uint32_t clone_flags, uintptr_t stack,
     if (copy_fs(clone_flags, proc) != 0) { //for core
         goto bad_fork_cleanup_kstack;
     }
+    signal_state_fork(&proc->signal, &current->signal);
     if (copy_mm(clone_flags, proc) != 0) {
         goto bad_fork_cleanup_fs;
     }
@@ -650,8 +652,22 @@ do_exit(int error_code) {
     current->state = PROC_ZOMBIE;
     current->exit_code = error_code;
     parent = current->parent;
-    if (parent != NULL && parent->wait_state == WT_CHILD) {
-        wake_parent = parent;
+    if (parent != NULL) {
+        /* SIGCHLD is queued while proc_lock still pins the parent in the
+         * process set.  A default-ignored SIGCHLD still must wake waitpid;
+         * a caught SIGCHLD also interrupts other interruptible waits. */
+        signal_queue(parent, SIGCHLD);
+        if (parent->state != PROC_STOPPED &&
+            (parent->wait_state == WT_CHILD ||
+             ((parent->wait_state & WT_INTERRUPTED) != 0 &&
+              signal_should_interrupt(parent)))) {
+            wake_parent = parent;
+            parent->state = PROC_RUNNABLE;
+            parent->wait_state = 0;
+            if (parent->on_cpu) {
+                parent->need_resched = 1;
+            }
+        }
     }
     while (current->cptr != NULL) {
         struct proc_struct *proc = current->cptr;
@@ -663,8 +679,19 @@ do_exit(int error_code) {
         }
         proc->parent = initproc;
         initproc->cptr = proc;
-        if (proc->state == PROC_ZOMBIE && initproc->wait_state == WT_CHILD) {
-            wake_init = 1;
+        if (proc->state == PROC_ZOMBIE) {
+            signal_queue(initproc, SIGCHLD);
+            if (initproc->state != PROC_STOPPED &&
+                (initproc->wait_state == WT_CHILD ||
+                 ((initproc->wait_state & WT_INTERRUPTED) != 0 &&
+                  signal_should_interrupt(initproc)))) {
+                wake_init = 1;
+                initproc->state = PROC_RUNNABLE;
+                initproc->wait_state = 0;
+                if (initproc->on_cpu) {
+                    initproc->need_resched = 1;
+                }
+            }
         }
     }
     spin_unlock(&proc_lock);
@@ -876,7 +903,7 @@ load_icode(int fd, int argc, char **kargv) {
     struct trapframe *tf = current->tf;
     memset(tf, 0, sizeof(struct trapframe));
     tf->tf_cs = USER_CS;
-    tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
+    tf->tf_ds = tf->tf_es = tf->tf_fs = tf->tf_gs = tf->tf_ss = USER_DS;
     tf->tf_esp = stacktop;
     tf->tf_eip = elf->e_entry;
     tf->tf_eflags = FL_IF;
@@ -983,6 +1010,7 @@ do_execve(const char *name, int argc, const char **argv) {
         goto execve_exit;
     }
     put_kargv(argc, kargv);
+    signal_state_exec(&current->signal);
     set_proc_name(current, local_name);
     return 0;
 
@@ -1018,6 +1046,9 @@ do_wait(int pid, int *code_store) {
     }
 
 repeat:
+    if (signal_should_interrupt(current)) {
+        return -E_INTR;
+    }
     haskid = 0;
     proc = NULL;
     local_intr_save(intr_flag);
@@ -1060,6 +1091,9 @@ repeat:
         if (current->flags & PF_EXITING) {
             do_exit(-E_KILLED);
         }
+        if (signal_should_interrupt(current)) {
+            return -E_INTR;
+        }
         goto repeat;
     }
     return -E_BAD_PROC;
@@ -1080,14 +1114,20 @@ found_locked:
     return 0;
 }
 
-// do_kill - kill process with pid by set this process's flags with PF_EXITING
+// do_kill_signal - queue a signal for a process and wake interruptible waits.
 int
-do_kill(int pid) {
+do_kill_signal(int pid, int signo) {
     struct proc_struct *proc;
     bool wake = 0;
+    bool resume = 0;
+    bool resched = 0;
+    int target_cpu = -1;
     int ret = -E_INVAL;
     bool intr_flag;
 
+    if (signo <= 0 || signo >= UCORE_NSIG) {
+        return -E_INVAL;
+    }
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);
     proc = NULL;
@@ -1101,31 +1141,43 @@ do_kill(int pid) {
             }
         }
     }
-    if (proc != NULL) {
-        if (!(proc->flags & PF_EXITING)) {
-            proc->flags |= PF_EXITING;
-            wake = (proc->wait_state & WT_INTERRUPTED) != 0;
-            if (wake && proc->state != PROC_ZOMBIE) {
+    if (proc != NULL && proc->state != PROC_ZOMBIE) {
+        if (signal_queue(proc, signo) == 0) {
+            bool interrupt = signal_should_interrupt(proc);
+            bool stopped = proc->state == PROC_STOPPED;
+            wake = interrupt && (proc->wait_state & WT_INTERRUPTED) != 0;
+            resume = stopped && (signo == SIGCONT || signo == SIGKILL);
+            target_cpu = proc->cpu;
+            resched = (interrupt || resume) && proc->on_cpu;
+            if ((wake || resume) && proc->state != PROC_ZOMBIE) {
                 /* Publish the runnable state while proc_lock is held.  This
                  * prevents another CPU from reaping the process before the
                  * scheduler has a chance to enqueue it below. */
                 proc->state = PROC_RUNNABLE;
                 proc->wait_state = 0;
             }
+            if (resched) {
+                proc->need_resched = 1;
+            }
             ret = 0;
-        }
-        else {
-            ret = -E_KILLED;
         }
     }
     spin_unlock(&proc_lock);
     local_intr_restore(intr_flag);
 
-    if (ret == 0 && wake) {
+    if (ret == 0 && (wake || resume)) {
         wakeup_proc(proc);
+    }
+    if (ret == 0 && resched && target_cpu != smp_current_cpu()) {
+        smp_send_reschedule_cpu(target_cpu);
     }
     return ret;
 
+}
+
+int
+do_kill(int pid) {
+    return do_kill_signal(pid, SIGTERM);
 }
 
 static struct proc_struct *
@@ -1369,6 +1421,9 @@ do_sleep(unsigned int time) {
     if (time == 0) {
         return 0;
     }
+    if (signal_should_interrupt(current)) {
+        return -E_INTR;
+    }
     bool intr_flag;
     local_intr_save(intr_flag);
     timer_t __timer, *timer = timer_init(&__timer, current, time);
@@ -1382,5 +1437,8 @@ do_sleep(unsigned int time) {
     schedule();
 
     del_timer(timer);
+    if (signal_should_interrupt(current)) {
+        return -E_INTR;
+    }
     return 0;
 }

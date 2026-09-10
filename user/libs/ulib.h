@@ -3,6 +3,7 @@
 
 #include <defs.h>
 #include <unistd.h>
+#include <signal.h>
 
 void __warn(const char *file, int line, const char *fmt, ...);
 void __noreturn __panic(const char *file, int line, const char *fmt, ...);
@@ -33,7 +34,6 @@ int clone(int (*fn)(void *), void *child_stack,
 int wait(void);
 int waitpid(int pid, int *store);
 void yield(void);
-int kill(int pid);
 int getpid(void);
 int getppid(void);
 int gettid(void);

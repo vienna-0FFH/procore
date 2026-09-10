@@ -73,8 +73,31 @@ sys_yield(void) {
 }
 
 int
-sys_kill(int pid) {
-    return syscall1(SYS_kill, pid);
+sys_kill(int pid, int signo) {
+    return syscall2(SYS_kill, pid, signo);
+}
+
+int
+sys_raise(int signo) {
+    return syscall1(SYS_raise, signo);
+}
+
+int
+sys_sigaction(int signo, const struct sigaction *action,
+              struct sigaction *old_action) {
+    return syscall3(SYS_sigaction, signo, (uintptr_t)action,
+                    (uintptr_t)old_action);
+}
+
+int
+sys_sigprocmask(int how, const sigset_t *set, sigset_t *old_set) {
+    return syscall3(SYS_sigprocmask, how, (uintptr_t)set,
+                    (uintptr_t)old_set);
+}
+
+int
+sys_sigreturn(void) {
+    return syscall0(SYS_sigreturn);
 }
 
 int

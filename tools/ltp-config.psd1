@@ -21,6 +21,12 @@
     # after it emits the user-test-result marker and has a bounded runtime.
     Tests = @(
         'hello',
+        'signalchldtest',
+        'signaldefaulttest',
+        'signalmasktest',
+        'signalpipetest',
+        'signalproctest',
+        'signalstoptest',
         'chdirtest',
         'clonetest',
         'mmaptest',
@@ -30,7 +36,6 @@
         'vfstest',
         'nettest',
         'netconnecttest',
-        'tcpwindowtest',
         'tcplistentest',
         'affinitytest',
         'schedtest',

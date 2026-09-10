@@ -27,7 +27,8 @@
 #define E_EXISTS            23  // File/Directory Already Exists
 #define E_NOTEMPTY          24  // Directory is Not Empty
 #define E_PIPE              25  // Broken pipe
+#define E_INTR              26  // Interrupted by a signal
 /* the maximum allowed */
-#define MAXERROR            25
+#define MAXERROR            26
 
 #endif /* !__LIBS_ERROR_H__ */

@@ -265,7 +265,11 @@ wakeup_proc(struct proc_struct *proc) {
     }
     local_intr_save(intr_flag);
     spin_lock(&proc_lock);
-    if (proc->state != PROC_RUNNABLE && proc->state != PROC_ZOMBIE) {
+    if (proc->state == PROC_STOPPED) {
+        /* A stopped task is resumed only by SIGCONT or SIGKILL.  Timer,
+         * semaphore, and child wakeups must not bypass that state. */
+    }
+    else if (proc->state != PROC_RUNNABLE && proc->state != PROC_ZOMBIE) {
         proc->state = PROC_RUNNABLE;
         proc->wait_state = 0;
         enqueue = 1;
@@ -281,6 +285,27 @@ wakeup_proc(struct proc_struct *proc) {
         sched_enqueue_proc(proc);
     }
     local_intr_restore(intr_flag);
+}
+
+/* Remove a task from its run queue before publishing PROC_STOPPED.  The
+ * caller holds proc_lock, matching schedule()'s lock order. */
+void
+sched_stop_locked(struct proc_struct *proc) {
+    struct run_queue *rq;
+
+    if (proc == NULL || sched_is_idle(proc)) {
+        return;
+    }
+    rq = proc->rq;
+    if (proc->on_rq && rq != NULL) {
+        spin_lock(&rq->lock);
+        if (proc->on_rq && proc->rq == rq) {
+            sched_class_dequeue_locked(rq, proc);
+        }
+        spin_unlock(&rq->lock);
+    }
+    proc->state = PROC_STOPPED;
+    proc->wait_state = 0;
 }
 
 void

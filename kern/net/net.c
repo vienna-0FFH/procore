@@ -5,6 +5,7 @@
 #include <kmalloc.h>
 #include <net.h>
 #include <net_proto.h>
+#include <proc.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -40,6 +41,23 @@ net_tcp_start_fin(struct net_socket *socket);
 static void
 net_receive_tcp_frame(const uint8_t *frame, size_t length,
                       const uint8_t source_mac[NET_ETH_ADDR_LEN]);
+
+/* RX and accept semaphores count queued packets/children, so ordinary
+ * producer events use up(). State transitions such as EOF and close use a
+ * broadcast wakeup because they must release every blocked caller. */
+static void
+net_socket_wake_rx_all(struct net_socket *socket) {
+    if (socket != NULL) {
+        sem_wake_all(&socket->rx_sem);
+    }
+}
+
+static void
+net_socket_wake_accept_all(struct net_socket *socket) {
+    if (socket != NULL) {
+        sem_wake_all(&socket->accept_sem);
+    }
+}
 
 static int
 net_queue_packet(struct net_socket *socket, const void *data, size_t length,
@@ -829,7 +847,7 @@ net_receive_tcp_frame(const uint8_t *frame, size_t length,
                                    socket->tcp_snd_nxt, ack, NULL, 0);
     }
     if (mark_eof) {
-        up(&socket->rx_sem);
+        net_socket_wake_rx_all(socket);
     }
     net_socket_put(socket);
 }
@@ -905,7 +923,7 @@ net_tcp_retransmit(void) {
         uint32_t sequence = 0, acknowledgement = 0;
         bool retry = 0;
         bool drop_child = 0;
-        int eof_waiters = 0;
+        bool eof_event = 0;
         struct net_socket *child_listener = NULL;
         struct net_tcp_tx_segment *first;
         spin_lock(&socket->lock);
@@ -964,7 +982,7 @@ net_tcp_retransmit(void) {
                     socket->tcp_state = NET_TCP_CLOSED;
                     socket->tcp_fin_sent = 0;
                     socket->tcp_eof = 1;
-                    eof_waiters = socket->waiters;
+                    eof_event = 1;
                 }
                 socket->tcp_last_tx_flags = 0;
             }
@@ -988,8 +1006,8 @@ net_tcp_retransmit(void) {
             }
         }
         spin_unlock(&socket->lock);
-        while (eof_waiters-- > 0) {
-            up(&socket->rx_sem);
+        if (eof_event) {
+            net_socket_wake_rx_all(socket);
         }
         if (retry) {
             (void)net_tcp_send_segment(socket, flags, sequence,
@@ -1056,7 +1074,6 @@ net_socket_create(int domain, int type, int protocol) {
     list_init(&socket->accept_queue);
     list_init(&socket->accept_link);
     socket->rx_count = 0;
-    socket->waiters = 0;
     socket->ref_count = 1;
     socket->descriptor_count = 1;
     socket->type = type;
@@ -1068,14 +1085,12 @@ net_socket_create(int domain, int type, int protocol) {
     socket->listening = 0;
     socket->listen_backlog = 0;
     socket->accept_count = 0;
-    socket->accept_waiters = 0;
     socket->listener = NULL;
     memset(&socket->peer, 0, sizeof(socket->peer));
     socket->tcp_state = NET_TCP_CLOSED;
     socket->tcp_snd_una = 0;
     socket->tcp_snd_nxt = 0;
     socket->tcp_rcv_nxt = 0;
-    socket->connect_waiters = 0;
     socket->tcp_eof = 0;
     socket->tcp_read_shutdown = 0;
     socket->tcp_write_shutdown = 0;
@@ -1127,8 +1142,6 @@ net_socket_get_descriptor(struct net_socket *socket) {
 
 void
 net_socket_close_descriptor(struct net_socket *socket) {
-    int waiters = 0;
-    int accept_waiters = 0;
     if (socket == NULL ||
         atomic_dec_return(&socket->descriptor_count) != 0) {
         return;
@@ -1136,15 +1149,9 @@ net_socket_close_descriptor(struct net_socket *socket) {
     spin_lock(&socket->lock);
     socket->closed = 1;
     socket->listening = 0;
-    waiters = socket->waiters;
-    accept_waiters = socket->accept_waiters;
     spin_unlock(&socket->lock);
-    while (waiters-- > 0) {
-        up(&socket->rx_sem);
-    }
-    while (accept_waiters-- > 0) {
-        up(&socket->accept_sem);
-    }
+    net_socket_wake_rx_all(socket);
+    net_socket_wake_accept_all(socket);
 
     /* A listener owns the queued child sockets until accept() transfers one
      * to a descriptor. Closing the listener must release that ownership and
@@ -1174,7 +1181,7 @@ net_socket_close_descriptor(struct net_socket *socket) {
         if (child == NULL) {
             break;
         }
-        up(&child->rx_sem);
+        net_socket_wake_rx_all(child);
         net_socket_close_descriptor(child);
         net_socket_put(child);
         if (owner != NULL) {
@@ -1375,7 +1382,6 @@ int
 net_socket_shutdown(struct net_socket *socket, int how) {
     bool write_requested;
     bool wait_for_fin;
-    int waiters = 0;
     size_t start_tick;
     int ret;
 
@@ -1395,7 +1401,6 @@ net_socket_shutdown(struct net_socket *socket, int how) {
         list_entry_t *entry;
         socket->tcp_read_shutdown = 1;
         socket->tcp_eof = 1;
-        waiters = socket->waiters;
         while ((entry = list_next(&socket->rx_queue)) !=
                &socket->rx_queue) {
             packet = to_struct(entry, struct net_packet, link);
@@ -1408,8 +1413,8 @@ net_socket_shutdown(struct net_socket *socket, int how) {
         socket->tcp_write_shutdown = 1;
     }
     spin_unlock(&socket->lock);
-    while (waiters-- > 0) {
-        up(&socket->rx_sem);
+    if (how == SHUT_RD || how == SHUT_RDWR) {
+        net_socket_wake_rx_all(socket);
     }
     if (!write_requested) {
         return 0;
@@ -1522,14 +1527,10 @@ net_socket_accept(struct net_socket *socket,
             spin_unlock(&socket->lock);
             return -E_BUSY;
         }
-        socket->accept_waiters++;
         spin_unlock(&socket->lock);
-        down(&socket->accept_sem);
-        spin_lock(&socket->lock);
-        if (socket->accept_waiters > 0) {
-            socket->accept_waiters--;
+        if (down_interruptible(&socket->accept_sem) != 0) {
+            return -E_INTR;
         }
-        spin_unlock(&socket->lock);
     }
 }
 
@@ -1742,11 +1743,11 @@ net_socket_recvfrom(struct net_socket *socket, void *data, size_t length,
             spin_unlock(&socket->lock);
             return -E_BUSY;
         }
-        socket->waiters++;
         spin_unlock(&socket->lock);
-        down(&socket->rx_sem);
+        if (down_interruptible(&socket->rx_sem) != 0) {
+            return -E_INTR;
+        }
         spin_lock(&socket->lock);
-        socket->waiters--;
         if (socket->closed) {
             spin_unlock(&socket->lock);
             return -E_BAD_PROC;
@@ -1809,6 +1810,9 @@ net_socket_send(struct net_socket *socket, const void *data, size_t length) {
                 socket->tcp_write_shutdown) {
                 spin_unlock(&socket->lock);
                 kfree(segment);
+                if (offset == 0 && current != NULL) {
+                    (void)signal_queue(current, SIGPIPE);
+                }
                 return offset != 0 ? (int)offset : -E_PIPE;
             }
             if (socket->tcp_snd_wnd == 0) {
@@ -1928,12 +1932,10 @@ net_socket_recv(struct net_socket *socket, void *data, size_t length,
                 spin_unlock(&socket->lock);
                 return -E_BUSY;
             }
-            socket->waiters++;
             spin_unlock(&socket->lock);
-            down(&socket->rx_sem);
-            spin_lock(&socket->lock);
-            socket->waiters--;
-            spin_unlock(&socket->lock);
+            if (down_interruptible(&socket->rx_sem) != 0) {
+                return -E_INTR;
+            }
         }
     }
     for (;;) {

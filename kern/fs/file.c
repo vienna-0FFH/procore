@@ -38,8 +38,6 @@ struct pipe {
     size_t count;
     int readers;
     int writers;
-    int read_waiters;
-    int write_waiters;
     volatile int ref_count;
 };
 
@@ -69,43 +67,31 @@ void open_file_put(struct open_file *description);
 
 static void
 pipe_wake_readers(struct pipe *pipe, bool all) {
-    int waiters;
     if (pipe == NULL) {
         return;
     }
-    spin_lock(&pipe->lock);
-    waiters = pipe->read_waiters;
-    if (!all && waiters > 0) {
-        waiters = 1;
+    if (all) {
+        sem_wake_all(&pipe->read_sem);
     }
-    if (waiters > pipe->read_waiters) {
-        waiters = pipe->read_waiters;
-    }
-    pipe->read_waiters -= waiters;
-    spin_unlock(&pipe->lock);
-    while (waiters-- > 0) {
-        up(&pipe->read_sem);
+    else {
+        /* Keep one event token if a writer races the reader between its
+         * empty-buffer check and semaphore wait setup. */
+        sem_wake_event(&pipe->read_sem);
     }
 }
 
 static void
 pipe_wake_writers(struct pipe *pipe, bool all) {
-    int waiters;
     if (pipe == NULL) {
         return;
     }
-    spin_lock(&pipe->lock);
-    waiters = pipe->write_waiters;
-    if (!all && waiters > 0) {
-        waiters = 1;
+    if (all) {
+        sem_wake_all(&pipe->write_sem);
     }
-    if (waiters > pipe->write_waiters) {
-        waiters = pipe->write_waiters;
-    }
-    pipe->write_waiters -= waiters;
-    spin_unlock(&pipe->lock);
-    while (waiters-- > 0) {
-        up(&pipe->write_sem);
+    else {
+        /* These semaphores represent condition changes, rather than a
+         * count of bytes or free slots. */
+        sem_wake_event(&pipe->write_sem);
     }
 }
 
@@ -486,7 +472,6 @@ pipe_create(void) {
     sem_init(&pipe->write_sem, 0);
     pipe->head = pipe->tail = pipe->count = 0;
     pipe->readers = pipe->writers = 0;
-    pipe->read_waiters = pipe->write_waiters = 0;
     pipe->ref_count = 1;             /* temporary creator reference */
     return pipe;
 }
@@ -532,9 +517,10 @@ pipe_read(struct pipe *pipe, void *base, size_t len, bool nonblock) {
             spin_unlock(&pipe->lock);
             return -E_BUSY;
         }
-        pipe->read_waiters++;
         spin_unlock(&pipe->lock);
-        down(&pipe->read_sem);
+        if (down_interruptible(&pipe->read_sem) != 0) {
+            return -E_INTR;
+        }
     }
 }
 
@@ -549,6 +535,9 @@ pipe_write(struct pipe *pipe, const void *base, size_t len, bool nonblock) {
         spin_lock(&pipe->lock);
         if (pipe->readers == 0) {
             spin_unlock(&pipe->lock);
+            if (written == 0) {
+                (void)signal_queue(current, SIGPIPE);
+            }
             return written != 0 ? (int)written : -E_PIPE;
         }
         if (pipe->count < FS_PIPE_CAPACITY) {
@@ -580,9 +569,10 @@ pipe_write(struct pipe *pipe, const void *base, size_t len, bool nonblock) {
             spin_unlock(&pipe->lock);
             return written != 0 ? (int)written : -E_BUSY;
         }
-        pipe->write_waiters++;
         spin_unlock(&pipe->lock);
-        down(&pipe->write_sem);
+        if (down_interruptible(&pipe->write_sem) != 0) {
+            return written != 0 ? (int)written : -E_INTR;
+        }
     }
     return (int)written;
 }

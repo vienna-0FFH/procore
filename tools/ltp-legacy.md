@@ -4,7 +4,8 @@ The selected upstream reference is Linux Test Project tag `20210927`, commit
 `12beeda351b5d758a729aaf695b836ccc9eb5304`. This version still contains the
 classic `runltp` and the syscall runfile used to select the source tests. The
 full Linux suite is not copied into uCore: its binaries require Linux/glibc,
-`/proc`, signals, namespaces, and privilege operations that are outside the
+`/proc`, advanced Linux signal facilities, namespaces, and privilege operations
+that are outside the
 current ABI.
 
 The uCore adaptation is `user/ltp_legacy.c`. It keeps the old test intent while
@@ -20,7 +21,9 @@ replacing Linux-only setup with uCore interfaces:
 | `getcpu01`, `sched_setaffinity01` | query the uCore CPU and set/read the current task mask |
 
 The port deliberately omits `/proc/sys/kernel/pid_max`, symlink-loop cases,
-signals, file-backed mappings, and root-only checks. It must not be reported as
+advanced signal queue/timer cases, file-backed mappings, and root-only checks.
+The native signal tests cover the first-phase `raise`/`kill`/`sigaction`,
+masking, `SIGCHLD`, `SIGPIPE`, and stop/continue ABI separately. It must not be reported as
 an upstream Linux LTP pass; it is a uCore-native port of the 20210927
 assertions.
 

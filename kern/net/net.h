@@ -33,7 +33,6 @@ struct net_socket {
     semaphore_t rx_sem;
     list_entry_t rx_queue;
     int rx_count;
-    int waiters;
     volatile int ref_count;
     volatile int descriptor_count;
     int type;
@@ -57,7 +56,6 @@ struct net_socket {
     bool listening;
     unsigned int listen_backlog;
     unsigned int accept_count;
-    int accept_waiters;
     semaphore_t accept_sem;
     list_entry_t accept_queue;
     list_entry_t accept_link;
@@ -65,7 +63,6 @@ struct net_socket {
     uint32_t tcp_snd_una;
     uint32_t tcp_snd_nxt;
     uint32_t tcp_rcv_nxt;
-    int connect_waiters;
     bool tcp_eof;
     bool tcp_read_shutdown;
     bool tcp_write_shutdown;

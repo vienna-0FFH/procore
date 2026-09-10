@@ -68,6 +68,7 @@ void sched_init(void);
 void sched_cpu_idle(void) __attribute__((noreturn));
 void sched_tick(void);
 void wakeup_proc(struct proc_struct *proc);
+void sched_stop_locked(struct proc_struct *proc);
 void schedule(void);
 void add_timer(timer_t *timer);
 void del_timer(timer_t *timer);
