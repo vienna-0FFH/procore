@@ -54,6 +54,14 @@
 #define SYS_sigaction       154
 #define SYS_sigprocmask     155
 #define SYS_sigreturn       156
+#define SYS_stat            157
+#define SYS_lstat           158
+#define SYS_ftruncate       159
+#define SYS_truncate        160
+#define SYS_pread           161
+#define SYS_pwrite          162
+#define SYS_readv           163
+#define SYS_writev          164
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -147,6 +155,11 @@ struct pollfd {
     int fd;
     int16_t events;
     int16_t revents;
+};
+
+struct iovec {
+    void *iov_base;
+    size_t iov_len;
 };
 
 #define NO_FD               -0x9527     // invalid fd

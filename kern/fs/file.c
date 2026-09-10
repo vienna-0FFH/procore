@@ -746,6 +746,64 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
 }
 
 int
+file_pread(int fd, void *base, size_t len, off_t offset,
+           size_t *copied_store) {
+    struct open_file *description;
+    struct iobuf iob;
+    size_t copied;
+    int ret;
+
+    *copied_store = 0;
+    if (offset < 0) {
+        return -E_INVAL;
+    }
+    if ((ret = regular_file_acquire(fd, 1, 0, &description)) != 0) {
+        return ret;
+    }
+    if (len == 0) {
+        open_file_put(description);
+        return 0;
+    }
+    down(&description->operation_sem);
+    iobuf_init(&iob, base, len, offset);
+    ret = vop_read(description->object.node, &iob);
+    copied = iobuf_used(&iob);
+    up(&description->operation_sem);
+    *copied_store = copied;
+    open_file_put(description);
+    return ret;
+}
+
+int
+file_pwrite(int fd, const void *base, size_t len, off_t offset,
+            size_t *copied_store) {
+    struct open_file *description;
+    struct iobuf iob;
+    size_t copied;
+    int ret;
+
+    *copied_store = 0;
+    if (offset < 0) {
+        return -E_INVAL;
+    }
+    if ((ret = regular_file_acquire(fd, 0, 1, &description)) != 0) {
+        return ret;
+    }
+    if (len == 0) {
+        open_file_put(description);
+        return 0;
+    }
+    down(&description->operation_sem);
+    iobuf_init(&iob, (void *)base, len, offset);
+    ret = vop_write(description->object.node, &iob);
+    copied = iobuf_used(&iob);
+    up(&description->operation_sem);
+    *copied_store = copied;
+    open_file_put(description);
+    return ret;
+}
+
+int
 file_seek(int fd, off_t pos, int whence) {
     struct open_file *description;
     int ret = fd_acquire(fd, &description);
@@ -793,6 +851,24 @@ file_fstat(int fd, struct stat *stat) {
     }
     down(&description->operation_sem);
     ret = vop_fstat(description->object.node, stat);
+    up(&description->operation_sem);
+    open_file_put(description);
+    return ret;
+}
+
+int
+file_ftruncate(int fd, off_t length) {
+    struct open_file *description;
+    int ret;
+
+    if (length < 0) {
+        return -E_INVAL;
+    }
+    if ((ret = regular_file_acquire(fd, 0, 1, &description)) != 0) {
+        return ret;
+    }
+    down(&description->operation_sem);
+    ret = vop_truncate(description->object.node, length);
     up(&description->operation_sem);
     open_file_put(description);
     return ret;

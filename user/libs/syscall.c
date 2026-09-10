@@ -291,8 +291,48 @@ sys_fstat(int fd, struct stat *stat) {
 }
 
 int
+sys_stat(const char *path, struct stat *stat) {
+    return syscall2(SYS_stat, (uintptr_t)path, (uintptr_t)stat);
+}
+
+int
+sys_lstat(const char *path, struct stat *stat) {
+    return syscall2(SYS_lstat, (uintptr_t)path, (uintptr_t)stat);
+}
+
+int
 sys_fsync(int fd) {
     return syscall1(SYS_fsync, fd);
+}
+
+int
+sys_ftruncate(int fd, off_t length) {
+    return syscall2(SYS_ftruncate, fd, length);
+}
+
+int
+sys_truncate(const char *path, off_t length) {
+    return syscall2(SYS_truncate, (uintptr_t)path, length);
+}
+
+int
+sys_pread(int fd, void *base, size_t len, off_t offset) {
+    return syscall4(SYS_pread, fd, (uintptr_t)base, len, offset);
+}
+
+int
+sys_pwrite(int fd, const void *base, size_t len, off_t offset) {
+    return syscall4(SYS_pwrite, fd, (uintptr_t)base, len, offset);
+}
+
+int
+sys_readv(int fd, const struct iovec *iov, size_t count) {
+    return syscall3(SYS_readv, fd, (uintptr_t)iov, count);
+}
+
+int
+sys_writev(int fd, const struct iovec *iov, size_t count) {
+    return syscall3(SYS_writev, fd, (uintptr_t)iov, count);
 }
 
 int

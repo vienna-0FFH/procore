@@ -410,9 +410,55 @@ sys_fstat(uint32_t arg[]) {
 }
 
 static int
+sys_stat(uint32_t arg[]) {
+    return sysfile_stat((const char *)arg[0],
+                        (struct stat *)arg[1], 0);
+}
+
+static int
+sys_lstat(uint32_t arg[]) {
+    return sysfile_stat((const char *)arg[0],
+                        (struct stat *)arg[1], 1);
+}
+
+static int
 sys_fsync(uint32_t arg[]) {
     int fd = (int)arg[0];
     return sysfile_fsync(fd);
+}
+
+static int
+sys_ftruncate(uint32_t arg[]) {
+    return sysfile_ftruncate((int)arg[0], (off_t)arg[1]);
+}
+
+static int
+sys_truncate(uint32_t arg[]) {
+    return sysfile_truncate((const char *)arg[0], (off_t)arg[1]);
+}
+
+static int
+sys_pread(uint32_t arg[]) {
+    return sysfile_pread((int)arg[0], (void *)arg[1],
+                         (size_t)arg[2], (off_t)arg[3]);
+}
+
+static int
+sys_pwrite(uint32_t arg[]) {
+    return sysfile_pwrite((int)arg[0], (const void *)arg[1],
+                          (size_t)arg[2], (off_t)arg[3]);
+}
+
+static int
+sys_readv(uint32_t arg[]) {
+    return sysfile_readv((int)arg[0],
+                         (const struct iovec *)arg[1], (size_t)arg[2]);
+}
+
+static int
+sys_writev(uint32_t arg[]) {
+    return sysfile_writev((int)arg[0],
+                          (const struct iovec *)arg[1], (size_t)arg[2]);
 }
 
 static int
@@ -803,6 +849,14 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_sigaction]         sys_sigaction,
     [SYS_sigprocmask]       sys_sigprocmask,
     [SYS_sigreturn]         sys_sigreturn,
+    [SYS_stat]              sys_stat,
+    [SYS_lstat]             sys_lstat,
+    [SYS_ftruncate]         sys_ftruncate,
+    [SYS_truncate]          sys_truncate,
+    [SYS_pread]             sys_pread,
+    [SYS_pwrite]            sys_pwrite,
+    [SYS_readv]             sys_readv,
+    [SYS_writev]            sys_writev,
     [SYS_getpid]            sys_getpid,
     [SYS_getppid]           sys_getppid,
     [SYS_gettid]            sys_gettid,

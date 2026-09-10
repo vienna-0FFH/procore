@@ -32,8 +32,13 @@ int file_open(char *path, uint32_t open_flags);
 int file_close(int fd);
 int file_read(int fd, void *base, size_t len, size_t *copied_store);
 int file_write(int fd, void *base, size_t len, size_t *copied_store);
+int file_pread(int fd, void *base, size_t len, off_t offset,
+               size_t *copied_store);
+int file_pwrite(int fd, const void *base, size_t len, off_t offset,
+                size_t *copied_store);
 int file_seek(int fd, off_t pos, int whence);
 int file_fstat(int fd, struct stat *stat);
+int file_ftruncate(int fd, off_t length);
 int file_fsync(int fd);
 int file_getdirentry(int fd, struct dirent *dirent);
 int file_dup(int fd1, int fd2);

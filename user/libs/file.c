@@ -42,8 +42,48 @@ fstat(int fd, struct stat *stat) {
 }
 
 int
+stat(const char *path, struct stat *stat) {
+    return sys_stat(path, stat);
+}
+
+int
+lstat(const char *path, struct stat *stat) {
+    return sys_lstat(path, stat);
+}
+
+int
 fsync(int fd) {
     return sys_fsync(fd);
+}
+
+int
+ftruncate(int fd, off_t length) {
+    return sys_ftruncate(fd, length);
+}
+
+int
+truncate(const char *path, off_t length) {
+    return sys_truncate(path, length);
+}
+
+int
+pread(int fd, void *base, size_t len, off_t offset) {
+    return sys_pread(fd, base, len, offset);
+}
+
+int
+pwrite(int fd, const void *base, size_t len, off_t offset) {
+    return sys_pwrite(fd, base, len, offset);
+}
+
+int
+readv(int fd, const struct iovec *iov, size_t count) {
+    return sys_readv(fd, iov, count);
+}
+
+int
+writev(int fd, const struct iovec *iov, size_t count) {
+    return sys_writev(fd, iov, count);
 }
 
 int

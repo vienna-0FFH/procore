@@ -4,6 +4,7 @@
 #include <proc.h>
 #include <kmalloc.h>
 #include <vfs.h>
+#include <inode.h>
 #include <file.h>
 #include <iobuf.h>
 #include <sysfile.h>
@@ -12,8 +13,10 @@
 #include <unistd.h>
 #include <error.h>
 #include <assert.h>
+#include <fs_config.h>
 
 #define IOBUF_SIZE                          4096
+#define OFF_T_MAX                           ((off_t)~((uintptr_t)1 << 31))
 
 /* copy_path - copy path name */
 static int
@@ -184,10 +187,243 @@ sysfile_fstat(int fd, struct stat *__stat) {
     return ret;
 }
 
+int
+sysfile_stat(const char *__path, struct stat *__stat, bool nofollow) {
+    struct mm_struct *mm = current->mm;
+    struct inode *node;
+    struct stat local_stat;
+    char *path;
+    int ret = 0;
+
+    /* SFS currently has no symlink traversal operation.  Keep the explicit
+     * nofollow argument in the internal ABI so lstat can share validation and
+     * gain distinct semantics when the filesystem grows that operation. */
+    (void)nofollow;
+    if (mm == NULL || __stat == NULL ||
+        (ret = copy_path(&path, __path)) != 0) {
+        return ret != 0 ? ret : -E_INVAL;
+    }
+    ret = vfs_lookup(path, &node);
+    kfree(path);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = vop_fstat(node, &local_stat);
+    vop_ref_dec(node);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    ret = copy_to_user(mm, __stat, &local_stat, sizeof(local_stat)) ?
+          0 : -E_INVAL;
+    unlock_mm(mm);
+    return ret;
+}
+
 /* sysfile_fsync - sync file */
 int
 sysfile_fsync(int fd) {
     return file_fsync(fd);
+}
+
+int
+sysfile_ftruncate(int fd, off_t length) {
+    return file_ftruncate(fd, length);
+}
+
+int
+sysfile_truncate(const char *__path, off_t length) {
+    struct inode *node;
+    char *path;
+    int ret = 0;
+
+    if (length < 0 || (ret = copy_path(&path, __path)) != 0) {
+        return ret != 0 ? ret : -E_INVAL;
+    }
+    ret = vfs_lookup(path, &node);
+    kfree(path);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = vop_truncate(node, length);
+    vop_ref_dec(node);
+    return ret;
+}
+
+int
+sysfile_pread(int fd, void *base, size_t len, off_t offset) {
+    struct mm_struct *mm = current->mm;
+    uint8_t *buffer;
+    size_t total = 0;
+    int ret = 0;
+
+    if (mm == NULL || offset < 0) {
+        return -E_INVAL;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    if ((buffer = kmalloc(IOBUF_SIZE)) == NULL) {
+        return -E_NO_MEM;
+    }
+    while (total < len) {
+        size_t requested = len - total;
+        size_t copied = 0;
+        off_t position;
+        if (requested > IOBUF_SIZE) {
+            requested = IOBUF_SIZE;
+        }
+        if (offset > OFF_T_MAX - (off_t)total) {
+            ret = -E_INVAL;
+            break;
+        }
+        position = offset + (off_t)total;
+        ret = file_pread(fd, buffer, requested, position, &copied);
+        if (copied != 0) {
+            lock_mm(mm);
+            if (!copy_to_user(mm, (uint8_t *)base + total, buffer, copied)) {
+                ret = -E_INVAL;
+            }
+            unlock_mm(mm);
+            if (ret == -E_INVAL) {
+                break;
+            }
+            total += copied;
+        }
+        if (ret != 0 || copied < requested) {
+            break;
+        }
+    }
+    kfree(buffer);
+    return total != 0 ? (int)total : ret;
+}
+
+int
+sysfile_pwrite(int fd, const void *base, size_t len, off_t offset) {
+    struct mm_struct *mm = current->mm;
+    uint8_t *buffer;
+    size_t total = 0;
+    int ret = 0;
+
+    if (mm == NULL || offset < 0) {
+        return -E_INVAL;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    if ((buffer = kmalloc(IOBUF_SIZE)) == NULL) {
+        return -E_NO_MEM;
+    }
+    while (total < len) {
+        size_t requested = len - total;
+        size_t copied = 0;
+        off_t position;
+        if (requested > IOBUF_SIZE) {
+            requested = IOBUF_SIZE;
+        }
+        if (offset > OFF_T_MAX - (off_t)total) {
+            ret = -E_INVAL;
+            break;
+        }
+        position = offset + (off_t)total;
+        lock_mm(mm);
+        if (!copy_from_user(mm, buffer, (const uint8_t *)base + total,
+                            requested, 0)) {
+            ret = -E_INVAL;
+        }
+        unlock_mm(mm);
+        if (ret != 0) {
+            break;
+        }
+        ret = file_pwrite(fd, buffer, requested, position, &copied);
+        total += copied;
+        if (ret != 0 || copied < requested) {
+            break;
+        }
+    }
+    kfree(buffer);
+    return total != 0 ? (int)total : ret;
+}
+
+static int
+sysfile_copy_iov(struct mm_struct *mm, struct iovec *local,
+                 const struct iovec *user_iov, size_t count, bool write) {
+    size_t i;
+    if (mm == NULL || local == NULL || count > FS_IOV_MAX ||
+        (count != 0 && user_iov == NULL)) {
+        return -E_INVAL;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    lock_mm(mm);
+    if (!copy_from_user(mm, local, user_iov,
+                        count * sizeof(*local), 0)) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    for (i = 0; i < count; i++) {
+        if (local[i].iov_len != 0 &&
+            !user_mem_check(mm, (uintptr_t)local[i].iov_base,
+                            local[i].iov_len, write)) {
+            unlock_mm(mm);
+            return -E_INVAL;
+        }
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+int
+sysfile_readv(int fd, const struct iovec *user_iov, size_t count) {
+    struct mm_struct *mm = current->mm;
+    struct iovec local[FS_IOV_MAX];
+    size_t i, total = 0;
+    int ret;
+
+    ret = sysfile_copy_iov(mm, local, user_iov, count, 1);
+    if (ret != 0) {
+        return ret;
+    }
+    for (i = 0; i < count; i++) {
+        if (local[i].iov_len == 0) {
+            continue;
+        }
+        ret = sysfile_read(fd, local[i].iov_base, local[i].iov_len);
+        if (ret > 0) {
+            total += (size_t)ret;
+        }
+        if (ret < 0 || (size_t)ret < local[i].iov_len) {
+            break;
+        }
+    }
+    return total != 0 ? (int)total : ret;
+}
+
+int
+sysfile_writev(int fd, const struct iovec *user_iov, size_t count) {
+    struct mm_struct *mm = current->mm;
+    struct iovec local[FS_IOV_MAX];
+    size_t i, total = 0;
+    int ret;
+
+    ret = sysfile_copy_iov(mm, local, user_iov, count, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    for (i = 0; i < count; i++) {
+        if (local[i].iov_len == 0) {
+            continue;
+        }
+        ret = sysfile_write(fd, local[i].iov_base, local[i].iov_len);
+        if (ret > 0) {
+            total += (size_t)ret;
+        }
+        if (ret < 0 || (size_t)ret < local[i].iov_len) {
+            break;
+        }
+    }
+    return total != 0 ? (int)total : ret;
 }
 
 /* sysfile_chdir - change dir */

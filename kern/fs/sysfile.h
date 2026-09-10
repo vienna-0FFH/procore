@@ -5,6 +5,7 @@
 
 struct stat;
 struct dirent;
+struct iovec;
 
 int sysfile_open(const char *path, uint32_t open_flags);        // Open or create a file. FLAGS/MODE per the syscall.
 int sysfile_close(int fd);                                      // Close a vnode opened  
@@ -12,7 +13,14 @@ int sysfile_read(int fd, void *base, size_t len);               // Read file
 int sysfile_write(int fd, void *base, size_t len);              // Write file
 int sysfile_seek(int fd, off_t pos, int whence);                // Seek file  
 int sysfile_fstat(int fd, struct stat *stat);                   // Stat file 
+int sysfile_stat(const char *path, struct stat *stat, bool nofollow);
 int sysfile_fsync(int fd);                                      // Sync file
+int sysfile_ftruncate(int fd, off_t length);
+int sysfile_truncate(const char *path, off_t length);
+int sysfile_pread(int fd, void *base, size_t len, off_t offset);
+int sysfile_pwrite(int fd, const void *base, size_t len, off_t offset);
+int sysfile_readv(int fd, const struct iovec *iov, size_t count);
+int sysfile_writev(int fd, const struct iovec *iov, size_t count);
 int sysfile_chdir(const char *path);                            // change DIR  
 int sysfile_mkdir(const char *path);                            // create DIR
 int sysfile_link(const char *path1, const char *path2);         // set a path1's link as path2

@@ -2,6 +2,7 @@
 #define __USER_LIBS_FILE_H__
 
 #include <defs.h>
+#include <unistd.h>
 
 struct stat;
 
@@ -12,7 +13,15 @@ int write(int fd, void *base, size_t len);
 int seek(int fd, off_t pos, int whence);
 int lseek(int fd, off_t pos, int whence);
 int fstat(int fd, struct stat *stat);
+int stat(const char *path, struct stat *stat);
+int lstat(const char *path, struct stat *stat);
 int fsync(int fd);
+int ftruncate(int fd, off_t length);
+int truncate(const char *path, off_t length);
+int pread(int fd, void *base, size_t len, off_t offset);
+int pwrite(int fd, const void *base, size_t len, off_t offset);
+int readv(int fd, const struct iovec *iov, size_t count);
+int writev(int fd, const struct iovec *iov, size_t count);
 int dup(int fd);
 int dup2(int fd1, int fd2);
 int pipe(int *fd_store);

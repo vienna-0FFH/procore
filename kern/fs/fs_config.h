@@ -10,11 +10,18 @@
 #define FS_POLL_MAX_FDS              64U
 #endif
 
+#ifndef FS_IOV_MAX
+#define FS_IOV_MAX                   16U
+#endif
+
 #if FS_PIPE_CAPACITY < 2
 #error "FS_PIPE_CAPACITY must hold at least two bytes"
 #endif
 #if FS_POLL_MAX_FDS < 1
 #error "FS_POLL_MAX_FDS must be positive"
+#endif
+#if FS_IOV_MAX < 1
+#error "FS_IOV_MAX must be positive"
 #endif
 
 #endif /* !__KERN_FS_CONFIG_H__ */
