@@ -345,6 +345,143 @@ mm_unmap(struct mm_struct *mm, uintptr_t addr, size_t len) {
     return 0;
 }
 
+/* Change permissions on an already mapped interval.  i386 has no hardware
+ * read/execute distinction, so the VMA remains the source of truth for
+ * kernel copies while PTE_W enforces the write bit.  PROT_NONE is represented
+ * by a non-present software PTE that retains the physical page. */
+int
+mm_mprotect(struct mm_struct *mm, uintptr_t addr, size_t len,
+            uint32_t vm_flags) {
+    uintptr_t start, end, cursor;
+    list_entry_t *list, *le;
+    struct vma_struct *vma;
+
+    if (mm == NULL || len == 0 || (addr & (PGSIZE - 1)) != 0 ||
+        addr + len < addr ||
+        (vm_flags & ~(VM_READ | VM_WRITE | VM_EXEC)) != 0) {
+        return -E_INVAL;
+    }
+    start = addr;
+    end = ROUNDUP(addr + len, PGSIZE);
+    if (end <= start || !USER_ACCESS(start, end)) {
+        return -E_INVAL;
+    }
+
+    /* First require every page in the request to belong to an existing VMA. */
+    list = &(mm->mmap_list);
+    cursor = start;
+    le = list_next(list);
+    while (cursor < end) {
+        while (le != list && le2vma(le, list_link)->vm_end <= cursor) {
+            le = list_next(le);
+        }
+        if (le == list) {
+            return -E_INVAL;
+        }
+        vma = le2vma(le, list_link);
+        if (vma->vm_start > cursor) {
+            return -E_INVAL;
+        }
+        cursor = vma->vm_end < end ? vma->vm_end : end;
+        le = list_next(le);
+    }
+
+    /* Split the VMA containing the left edge. */
+    le = list_next(list);
+    while (le != list && le2vma(le, list_link)->vm_end <= start) {
+        le = list_next(le);
+    }
+    if (le == list) {
+        return -E_INVAL;
+    }
+    vma = le2vma(le, list_link);
+    if (vma->vm_start < start) {
+        struct vma_struct *right =
+            vma_create(start, vma->vm_end, vma->vm_flags);
+        if (right == NULL) {
+            return -E_NO_MEM;
+        }
+        right->vm_mm = mm;
+        list_add_after(le, &(right->list_link));
+        mm->map_count++;
+        vma->vm_end = start;
+        le = &(right->list_link);
+    }
+
+    /* Split the VMA containing the right edge. */
+    {
+        list_entry_t *right_le = le;
+        while (right_le != list &&
+               le2vma(right_le, list_link)->vm_end < end) {
+            right_le = list_next(right_le);
+        }
+        if (right_le == list) {
+            return -E_INVAL;
+        }
+        vma = le2vma(right_le, list_link);
+        if (vma->vm_end > end) {
+            struct vma_struct *right =
+                vma_create(end, vma->vm_end, vma->vm_flags);
+            if (right == NULL) {
+                return -E_NO_MEM;
+            }
+            right->vm_mm = mm;
+            list_add_after(right_le, &(right->list_link));
+            mm->map_count++;
+            vma->vm_end = end;
+        }
+    }
+
+    /* Every affected VMA now has exact interval boundaries. */
+    le = list_next(list);
+    while (le != list) {
+        vma = le2vma(le, list_link);
+        if (vma->vm_start >= end) {
+            break;
+        }
+        if (vma->vm_start >= start && vma->vm_end <= end) {
+            vma->vm_flags = vm_flags;
+        }
+        le = list_next(le);
+    }
+
+    for (cursor = start; cursor < end; cursor += PGSIZE) {
+        pte_t *ptep = get_pte(mm->pgdir, cursor, 0);
+        pte_t pte, updated;
+        if (ptep == NULL || *ptep == 0) {
+            continue;
+        }
+        pte = *ptep;
+        if (vm_flags == 0) {
+            if (pte & PTE_P) {
+                *ptep = (pte & ~PTE_P) | PTE_MPROTECT;
+                tlb_invalidate(mm->pgdir, cursor);
+            }
+            continue;
+        }
+        if (pte & PTE_MPROTECT) {
+            updated = PTE_ADDR(pte) | PTE_P | PTE_U |
+                      (pte & PTE_COW);
+            if ((vm_flags & VM_WRITE) && !(pte & PTE_COW)) {
+                updated |= PTE_W;
+            }
+            *ptep = updated;
+            tlb_invalidate(mm->pgdir, cursor);
+        }
+        else if (pte & PTE_P) {
+            /* A fork-shared COW page must stay COW even when the VMA is
+             * changed to writable; the first write still has to copy it. */
+            updated = pte & ~PTE_W;
+            if ((vm_flags & VM_WRITE) && !(pte & PTE_COW)) {
+                updated |= PTE_W;
+            }
+            *ptep = updated;
+            tlb_invalidate(mm->pgdir, cursor);
+        }
+    }
+    return 0;
+}
+
 int
 mm_brk(struct mm_struct *mm, uintptr_t newbrk) {
     uintptr_t old_end, new_end, heap_start;
@@ -733,6 +870,20 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
             cprintf("pgdir_alloc_page in do_pgfault failed\n");
             goto failed;
         }
+    }
+    else if (*ptep & PTE_MPROTECT) {
+        /* PROT_NONE retains the physical page in a software-only PTE.  Once
+         * the VMA permits access, restore it and let a COW write take its
+         * normal follow-up fault if the page is shared. */
+        struct Page *page = pa2page(PTE_ADDR(*ptep));
+        uint32_t saved = *ptep & PTE_COW;
+        *ptep = page2pa(page) | PTE_P | PTE_U | saved;
+        if ((vma->vm_flags & VM_WRITE) && !(saved & PTE_COW)) {
+            *ptep |= PTE_W;
+        }
+        tlb_invalidate(mm->pgdir, addr);
+        ret = 0;
+        goto pgfault_done;
     }
     else {
         struct Page *page=NULL;

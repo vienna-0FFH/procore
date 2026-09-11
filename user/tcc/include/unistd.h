@@ -79,6 +79,7 @@ char *getcwd(char *, size_t);
 int execvp(const char *, char *const []);
 int wait4(int, int *, unsigned int);
 int waitid(int, int, siginfo_t *, unsigned int);
+int mprotect(void *, size_t, unsigned int);
 int fchdir(int);
 int rmdir(const char *);
 int select(int, fd_set *, fd_set *, fd_set *, struct timeval *);

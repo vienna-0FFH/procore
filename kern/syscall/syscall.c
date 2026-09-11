@@ -408,6 +408,25 @@ sys_munmap(uint32_t arg[]) {
 }
 
 static int
+sys_mprotect(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uint32_t prot = arg[2];
+    uint32_t vm_flags = 0;
+    int ret;
+
+    if (mm == NULL || (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0) {
+        return -E_INVAL;
+    }
+    if (prot & PROT_READ) vm_flags |= VM_READ;
+    if (prot & PROT_WRITE) vm_flags |= VM_WRITE;
+    if (prot & PROT_EXEC) vm_flags |= VM_EXEC;
+    lock_mm(mm);
+    ret = mm_mprotect(mm, (uintptr_t)arg[0], (size_t)arg[1], vm_flags);
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
 sys_brk(uint32_t arg[]) {
     struct mm_struct *mm = current->mm;
     uintptr_t oldbrk;
@@ -1400,6 +1419,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_getresgid]         sys_getresgid,
     [SYS_mmap]              sys_mmap,
     [SYS_munmap]            sys_munmap,
+    [SYS_mprotect]          sys_mprotect,
     [SYS_brk]               sys_brk,
     [SYS_setaffinity]       sys_setaffinity,
     [SYS_getaffinity]       sys_getaffinity,

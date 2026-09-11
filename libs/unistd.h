@@ -82,6 +82,7 @@
 #define SYS_setsockopt      182
 #define SYS_select          183
 #define SYS_waitid          184
+#define SYS_mprotect        185
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100

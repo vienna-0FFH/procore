@@ -251,6 +251,11 @@ struct taskstate {
  * fault and the kernel can perform the copy-on-write transition. */
 #define PTE_COW         0x200
 
+/* A resident page hidden by mprotect(PROT_NONE).  This software-only bit
+ * keeps the physical address in the non-present PTE so permissions can be
+ * restored without discarding the page contents. */
+#define PTE_MPROTECT    0x080
+
 #define PTE_USER        (PTE_U | PTE_W | PTE_P)
 
 /* Control Register flags */

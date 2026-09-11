@@ -132,6 +132,11 @@ munmap(void *addr, size_t len) {
     return sys_munmap(addr, len);
 }
 
+int
+mprotect(void *addr, size_t len, uint32_t prot) {
+    return sys_mprotect(addr, len, prot);
+}
+
 uintptr_t
 brk(uintptr_t newbrk) {
     return (uintptr_t)sys_brk(newbrk);

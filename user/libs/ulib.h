@@ -53,6 +53,7 @@ int getaffinity(int pid, uint32_t *mask_store);
 int getcpustat(int cpu, struct cpu_stat *stat);
 void *mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);
 int munmap(void *addr, size_t len);
+int mprotect(void *addr, size_t len, uint32_t prot);
 uintptr_t brk(uintptr_t newbrk);
 void print_pgdir(void);
 int sleep(unsigned int time);

@@ -47,6 +47,7 @@ The current initial subset maps these LTP themes:
 | `chdirtest` | `chdir`, `dup`, `lseek` | VFS cwd and shared open-file offset |
 | `clonetest` | `clone`, `gettid`, `getppid`, `getcpu` | shared address space/thread entry |
 | `mmaptest` | `mmap`, `munmap`, `brk` | anonymous mappings and heap boundary |
+| `mprotecttest` | `mprotect` | page-aligned VMA permission changes, resident PTE updates, and PROT_NONE restoration |
 | `fdsharetest` | `dup`, `close`, `fork` | shared descriptions and SMP lifetime races |
 | `vfstest` | VFS namespace | mkdir, link, rename, unlink, traversal |
 | `nettest` | socket/UDP | loopback datagrams and descriptor sharing |
@@ -224,6 +225,7 @@ binary can execute on uCore.
 | `getcpu`, `sched_setaffinity` | set an allowed CPU, query current CPU, reject invalid masks | `PASS` for the supported mask/counter ABI | `affinitytest`, `schedtest` |
 | `brk` | grow/shrink break and touch newly allocated pages | `PASS` for anonymous heap semantics | `mmaptest` |
 | `mmap`, `munmap` | anonymous mappings, page alignment, partial unmap and fault behavior | `PASS` for anonymous subset; file-backed mappings are not implemented | `mmaptest` |
+| `mprotect` | writable/read-only transitions, `PROT_NONE`, and resident-page preservation | `PASS` for page-aligned anonymous mappings; hardware read/execute distinction remains i386-limited | `mprotecttest` |
 | `chdir` | directory, missing path, permissions, symlink-loop cases | `PORT`/`PASS` for uCore VFS subset; permissions/symlink cases `NOT_IMPL` | `chdirtest`, `vfstest` |
 | `open`, `close`, `read`, `write`, `fstat`, `stat`, `lstat` | descriptor/path errors, data transfer, metadata and lifecycle | `PASS` for supported SFS/device subset; `lstat` matches `stat` until symlink traversal is added | `vfstest`, `fdsharetest`, `fileiotest` |
 | `truncate`, `ftruncate`, `pread`, `pwrite`, `readv`, `writev` | file length changes, positional operations, and scatter/gather buffers | `PASS` for regular SFS files | `fileiotest` |

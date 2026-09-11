@@ -508,6 +508,14 @@ unmap_range(pde_t *pgdir, uintptr_t start, uintptr_t end) {
             if (*ptep & PTE_P) {
                 page_remove_pte(pgdir, la, ptep);
             }
+            else if (*ptep & PTE_MPROTECT) {
+                struct Page *page = pa2page(PTE_ADDR(*ptep));
+                if (page_ref_dec(page) == 0) {
+                    free_page(page);
+                }
+                *ptep = 0;
+                tlb_invalidate(pgdir, la);
+            }
             else if (*ptep != 0) {
                 /* A non-present entry may be a swap slot. */
                 swap_release_entry(*ptep);
@@ -585,6 +593,20 @@ copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share) {
                 }
                 page_ref_inc(page);
                 *nptep = page2pa(page) | perm;
+            }
+            else if (source & PTE_MPROTECT) {
+                /* PROT_NONE keeps its page resident in a software-only PTE;
+                 * fork shares that retained page and state.  Preserve the
+                 * fork COW transition for a page that was writable before it
+                 * was hidden; PTE_W is retained as that software metadata. */
+                struct Page *page = pa2page(PTE_ADDR(source));
+                if (!share && (source & PTE_W)) {
+                    source = (source & ~PTE_W) | PTE_COW;
+                    *ptep = source;
+                    tlb_invalidate(from, start);
+                }
+                page_ref_inc(page);
+                *nptep = source;
             }
             else {
                 /* Preserve a swap entry for the child. */
