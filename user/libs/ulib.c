@@ -83,6 +83,19 @@ getcpu(void) {
     return sys_getcpu();
 }
 
+int uname(struct utsname *name) { return sys_uname(name); }
+int sysinfo(struct sysinfo *info) { return sys_sysinfo(info); }
+int getuid(void) { return sys_getuid(); }
+int geteuid(void) { return sys_geteuid(); }
+int getgid(void) { return sys_getgid(); }
+int getegid(void) { return sys_getegid(); }
+int getresuid(uint32_t *real, uint32_t *effective, uint32_t *saved) {
+    return sys_getresuid(real, effective, saved);
+}
+int getresgid(uint32_t *real, uint32_t *effective, uint32_t *saved) {
+    return sys_getresgid(real, effective, saved);
+}
+
 int
 setaffinity(int pid, uint32_t mask) {
     return sys_setaffinity(pid, mask);

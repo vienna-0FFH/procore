@@ -198,6 +198,17 @@ clock_realtime_seconds(void) {
 }
 
 uint32_t
+clock_uptime_seconds(void) {
+    uint64_t value = clock_ticks_read();
+    uint32_t high = (uint32_t)(value >> 32);
+    uint32_t low = (uint32_t)value;
+    if (high != 0) {
+        return 0xFFFFFFFFU;
+    }
+    return low / CLOCK_TICK_HZ;
+}
+
+uint32_t
 clock_tick_hz(void) {
     return CLOCK_TICK_HZ;
 }

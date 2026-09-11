@@ -16,6 +16,12 @@ int access(const char *, int);
 int chdir(const char *);
 char *getcwd(char *, size_t);
 int execvp(const char *, char *const []);
+int uname(struct utsname *);
+int sysinfo(struct sysinfo *);
+int getuid(void);
+int geteuid(void);
+int getgid(void);
+int getegid(void);
 
 #define R_OK 4
 #define W_OK 2

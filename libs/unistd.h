@@ -67,6 +67,14 @@
 #define SYS_gettimeofday    167
 #define SYS_nanosleep       168
 #define SYS_time            169
+#define SYS_uname           170
+#define SYS_sysinfo         171
+#define SYS_getuid          172
+#define SYS_geteuid         173
+#define SYS_getgid          174
+#define SYS_getegid         175
+#define SYS_getresuid       176
+#define SYS_getresgid       177
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -121,6 +129,39 @@ struct cpu_stat {
     uint32_t migrations;
     uint32_t runnable;
 };
+
+#ifndef __UCORE_UTSNAME_DEFINED
+#define __UCORE_UTSNAME_DEFINED
+#define UCORE_UTS_FIELD_LEN 65
+struct utsname {
+    char sysname[UCORE_UTS_FIELD_LEN];
+    char nodename[UCORE_UTS_FIELD_LEN];
+    char release[UCORE_UTS_FIELD_LEN];
+    char version[UCORE_UTS_FIELD_LEN];
+    char machine[UCORE_UTS_FIELD_LEN];
+    char domainname[UCORE_UTS_FIELD_LEN];
+};
+#endif
+
+#ifndef __UCORE_SYSINFO_DEFINED
+#define __UCORE_SYSINFO_DEFINED
+struct sysinfo {
+    int32_t uptime;
+    uint32_t loads[3];
+    uint32_t totalram;
+    uint32_t freeram;
+    uint32_t sharedram;
+    uint32_t bufferram;
+    uint32_t totalswap;
+    uint32_t freeswap;
+    uint16_t procs;
+    uint16_t pad;
+    uint32_t totalhigh;
+    uint32_t freehigh;
+    uint32_t mem_unit;
+    char _f[8];
+};
+#endif
 
 /* VFS flags */
 // flags for open: choose one of these

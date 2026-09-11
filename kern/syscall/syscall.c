@@ -17,6 +17,28 @@
 #include <file.h>
 #include <kmalloc.h>
 #include <fs_config.h>
+#include <sysinfo_config.h>
+#include <swap.h>
+
+static size_t
+sysinfo_copy_string(char *dst, size_t capacity, const char *src) {
+    size_t length = strlen(src);
+    if (length >= capacity) length = capacity - 1;
+    memcpy(dst, src, length);
+    dst[length] = '\0';
+    return length;
+}
+
+static bool
+sysinfo_copy_to_user(struct mm_struct *mm, uintptr_t address,
+                     const void *source, size_t length) {
+    bool copied;
+    lock_mm(mm);
+    copied = address != 0 && user_mem_check(mm, address, length, 1) &&
+             copy_to_user(mm, (void *)address, source, length);
+    unlock_mm(mm);
+    return copied;
+}
 
 static int
 sys_exit(uint32_t arg[]) {
@@ -211,6 +233,93 @@ sys_gettid(uint32_t arg[]) {
 static int
 sys_getcpu(uint32_t arg[]) {
     return smp_current_cpu();
+}
+
+static uint16_t
+sysinfo_process_count(void) {
+    list_entry_t *le;
+    uint16_t count = 0;
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    for (le = list_next(&proc_list); le != &proc_list;
+         le = list_next(le)) {
+        if (count != 0xFFFFU) count++;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    return count;
+}
+
+static int
+sys_uname(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct utsname value;
+    if (mm == NULL || arg[0] == 0) return -E_INVAL;
+    memset(&value, 0, sizeof(value));
+    sysinfo_copy_string(value.sysname, sizeof(value.sysname), UCORE_SYSNAME);
+    sysinfo_copy_string(value.nodename, sizeof(value.nodename), UCORE_NODENAME);
+    sysinfo_copy_string(value.release, sizeof(value.release), UCORE_RELEASE);
+    sysinfo_copy_string(value.version, sizeof(value.version), UCORE_VERSION);
+    sysinfo_copy_string(value.machine, sizeof(value.machine), UCORE_MACHINE);
+    sysinfo_copy_string(value.domainname, sizeof(value.domainname), UCORE_DOMAINNAME);
+    return sysinfo_copy_to_user(mm, (uintptr_t)arg[0], &value, sizeof(value)) ?
+           0 : -E_INVAL;
+}
+
+static int
+sys_sysinfo(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct sysinfo value;
+    if (mm == NULL || arg[0] == 0) return -E_INVAL;
+    memset(&value, 0, sizeof(value));
+    value.uptime = (int32_t)clock_uptime_seconds();
+    value.totalram = (uint32_t)npage;
+    value.freeram = (uint32_t)nr_free_pages();
+    value.totalswap = (uint32_t)max_swap_offset;
+    value.freeswap = (uint32_t)max_swap_offset;
+    value.procs = sysinfo_process_count();
+    value.mem_unit = PGSIZE;
+    return sysinfo_copy_to_user(mm, (uintptr_t)arg[0], &value, sizeof(value)) ?
+           0 : -E_INVAL;
+}
+
+static int
+sys_getuid(uint32_t arg[]) { (void)arg; return (int)UCORE_DEFAULT_UID; }
+
+static int
+sys_geteuid(uint32_t arg[]) { (void)arg; return (int)UCORE_DEFAULT_UID; }
+
+static int
+sys_getgid(uint32_t arg[]) { (void)arg; return (int)UCORE_DEFAULT_GID; }
+
+static int
+sys_getegid(uint32_t arg[]) { (void)arg; return (int)UCORE_DEFAULT_GID; }
+
+static int
+sys_getresuid(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uint32_t value = UCORE_DEFAULT_UID;
+    int i;
+    if (mm == NULL) return -E_INVAL;
+    for (i = 0; i < 3; i++) {
+        if (arg[i] != 0 && !sysinfo_copy_to_user(mm, (uintptr_t)arg[i],
+                                                  &value, sizeof(value))) return -E_INVAL;
+    }
+    return 0;
+}
+
+static int
+sys_getresgid(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uint32_t value = UCORE_DEFAULT_GID;
+    int i;
+    if (mm == NULL) return -E_INVAL;
+    for (i = 0; i < 3; i++) {
+        if (arg[i] != 0 && !sysinfo_copy_to_user(mm, (uintptr_t)arg[i],
+                                                  &value, sizeof(value))) return -E_INVAL;
+    }
+    return 0;
 }
 
 static int
@@ -1059,6 +1168,14 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_getppid]           sys_getppid,
     [SYS_gettid]            sys_gettid,
     [SYS_getcpu]            sys_getcpu,
+    [SYS_uname]             sys_uname,
+    [SYS_sysinfo]           sys_sysinfo,
+    [SYS_getuid]            sys_getuid,
+    [SYS_geteuid]           sys_geteuid,
+    [SYS_getgid]            sys_getgid,
+    [SYS_getegid]           sys_getegid,
+    [SYS_getresuid]         sys_getresuid,
+    [SYS_getresgid]         sys_getresgid,
     [SYS_mmap]              sys_mmap,
     [SYS_munmap]            sys_munmap,
     [SYS_brk]               sys_brk,

@@ -120,6 +120,25 @@ sys_getcpu(void) {
     return syscall0(SYS_getcpu);
 }
 
+int sys_uname(struct utsname *name) {
+    return syscall1(SYS_uname, (uintptr_t)name);
+}
+int sys_sysinfo(struct sysinfo *info) {
+    return syscall1(SYS_sysinfo, (uintptr_t)info);
+}
+int sys_getuid(void) { return syscall0(SYS_getuid); }
+int sys_geteuid(void) { return syscall0(SYS_geteuid); }
+int sys_getgid(void) { return syscall0(SYS_getgid); }
+int sys_getegid(void) { return syscall0(SYS_getegid); }
+int sys_getresuid(uint32_t *real, uint32_t *effective, uint32_t *saved) {
+    return syscall3(SYS_getresuid, (uintptr_t)real, (uintptr_t)effective,
+                    (uintptr_t)saved);
+}
+int sys_getresgid(uint32_t *real, uint32_t *effective, uint32_t *saved) {
+    return syscall3(SYS_getresgid, (uintptr_t)real, (uintptr_t)effective,
+                    (uintptr_t)saved);
+}
+
 int
 sys_setaffinity(int pid, uint32_t mask) {
     return syscall2(SYS_setaffinity, pid, mask);
