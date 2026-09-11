@@ -101,7 +101,7 @@ clock_read_rtc(uint64_t *seconds_store) {
     if (seconds_store == NULL) {
         return 0;
     }
-    for (tries = 0; tries < 8U; tries++) {
+    for (tries = 0; tries < CLOCK_RTC_READ_RETRIES; tries++) {
         status_a = clock_cmos_read(0x0AU);
         if ((status_a & 0x80U) != 0) {
             continue;

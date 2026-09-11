@@ -15,12 +15,18 @@
 #ifndef CLOCK_RTC_EPOCH_YEAR
 #define CLOCK_RTC_EPOCH_YEAR          1970U
 #endif
+#ifndef CLOCK_RTC_READ_RETRIES
+#define CLOCK_RTC_READ_RETRIES        8U
+#endif
 
 #if CLOCK_TICK_HZ == 0
 #error "CLOCK_TICK_HZ must be positive"
 #endif
 #if CLOCK_RTC_DEFAULT_CENTURY < 19 || CLOCK_RTC_DEFAULT_CENTURY > 99
 #error "CLOCK_RTC_DEFAULT_CENTURY must be a two-digit century"
+#endif
+#if CLOCK_RTC_READ_RETRIES < 1
+#error "CLOCK_RTC_READ_RETRIES must be positive"
 #endif
 
 #endif /* !__KERN_DRIVER_CLOCK_CONFIG_H__ */
