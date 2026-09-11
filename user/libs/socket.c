@@ -71,6 +71,11 @@ int setsockopt(int fd, int level, int option, const void *value, size_t length) 
     return sys_setsockopt(fd, level, option, value, length);
 }
 
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+           fd_set *exceptfds, struct timeval *timeout) {
+    return sys_select(nfds, readfds, writefds, exceptfds, timeout);
+}
+
 int
 poll(struct pollfd *fds, size_t count, int timeout_ms) {
     return sys_poll(fds, count, timeout_ms);

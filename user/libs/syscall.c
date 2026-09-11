@@ -237,6 +237,12 @@ int sys_setsockopt(int fd, int level, int option, const void *value, size_t leng
     return syscall5(SYS_setsockopt, fd, level, option, (uintptr_t)value, length);
 }
 
+int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+               fd_set *exceptfds, struct timeval *timeout) {
+    return syscall5(SYS_select, nfds, (uintptr_t)readfds, (uintptr_t)writefds,
+                    (uintptr_t)exceptfds, (uintptr_t)timeout);
+}
+
 int
 sys_fcntl(int fd, int command, uint32_t argument) {
     return syscall3(SYS_fcntl, fd, command, argument);

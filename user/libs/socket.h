@@ -19,6 +19,8 @@ int getsockname(int fd, struct sockaddr_in *address, size_t length);
 int getpeername(int fd, struct sockaddr_in *address, size_t length);
 int getsockopt(int fd, int level, int option, void *value, size_t *length);
 int setsockopt(int fd, int level, int option, const void *value, size_t length);
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+           fd_set *exceptfds, struct timeval *timeout);
 int netstat(struct net_stats *stats);
 
 #endif /* !__USER_LIBS_SOCKET_H__ */

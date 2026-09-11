@@ -80,6 +80,7 @@
 #define SYS_rmdir           180
 #define SYS_getsockopt      181
 #define SYS_setsockopt      182
+#define SYS_select          183
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -209,6 +210,31 @@ struct pollfd {
     int16_t events;
     int16_t revents;
 };
+
+#ifndef UCORE_FD_SETSIZE
+#define UCORE_FD_SETSIZE    256
+#endif
+#define UCORE_FD_SET_WORDS  ((UCORE_FD_SETSIZE + 31) / 32)
+typedef struct {
+    uint32_t bits[UCORE_FD_SET_WORDS];
+} fd_set;
+
+#define FD_ZERO(set) do { \
+    size_t __fd_i; \
+    for (__fd_i = 0; __fd_i < UCORE_FD_SET_WORDS; __fd_i++) \
+        (set)->bits[__fd_i] = 0; \
+} while (0)
+#define FD_SET(fd, set) do { \
+    if ((fd) >= 0 && (fd) < UCORE_FD_SETSIZE) \
+        (set)->bits[(fd) >> 5] |= 1U << ((fd) & 31); \
+} while (0)
+#define FD_CLR(fd, set) do { \
+    if ((fd) >= 0 && (fd) < UCORE_FD_SETSIZE) \
+        (set)->bits[(fd) >> 5] &= ~(1U << ((fd) & 31)); \
+} while (0)
+#define FD_ISSET(fd, set) \
+    ((fd) >= 0 && (fd) < UCORE_FD_SETSIZE && \
+     (((set)->bits[(fd) >> 5] & (1U << ((fd) & 31))) != 0))
 
 struct iovec {
     void *iov_base;

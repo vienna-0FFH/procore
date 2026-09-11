@@ -1210,6 +1210,140 @@ sys_poll(uint32_t arg[]) {
     return ret;
 }
 
+static int
+sys_select_copy_set(struct mm_struct *mm, uintptr_t address, fd_set *store) {
+    if (address == 0) {
+        FD_ZERO(store);
+        return 0;
+    }
+    lock_mm(mm);
+    if (!copy_from_user(mm, store, (void *)address, sizeof(*store), 0)) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
+sys_select_store_set(struct mm_struct *mm, uintptr_t address,
+                     const fd_set *source) {
+    if (address == 0) return 0;
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)address, source, sizeof(*source))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
+sys_select(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    fd_set read_in, write_in, except_in;
+    fd_set read_out, write_out, except_out;
+    struct timeval timeout_value;
+    int nfds = (int)arg[0];
+    int timeout_mode = 0;
+    uint32_t timeout_ticks = 0;
+    uint32_t usec_per_tick;
+    uint64_t start_ticks;
+    int ret = 0;
+
+    if (mm == NULL || nfds < 0 || nfds > UCORE_FD_SETSIZE) return -E_INVAL;
+    if (sys_select_copy_set(mm, (uintptr_t)arg[1], &read_in) != 0 ||
+        sys_select_copy_set(mm, (uintptr_t)arg[2], &write_in) != 0 ||
+        sys_select_copy_set(mm, (uintptr_t)arg[3], &except_in) != 0) {
+        return -E_INVAL;
+    }
+    {
+        int fd;
+        for (fd = 0; fd < nfds; fd++) {
+            if (FD_ISSET(fd, &except_in)) return -E_UNIMP;
+        }
+    }
+    if (arg[4] != 0) {
+        lock_mm(mm);
+        if (!copy_from_user(mm, &timeout_value, (void *)arg[4],
+                            sizeof(timeout_value), 0)) {
+            unlock_mm(mm);
+            return -E_INVAL;
+        }
+        unlock_mm(mm);
+        if (timeout_value.tv_sec < 0 || timeout_value.tv_usec < 0 ||
+            timeout_value.tv_usec >= 1000000) return -E_INVAL;
+        if ((uint32_t)timeout_value.tv_sec > 0xFFFFFFFFU / CLOCK_TICK_HZ) {
+            return -E_TOO_BIG;
+        }
+        usec_per_tick = 1000000U / CLOCK_TICK_HZ;
+        if (usec_per_tick == 0) usec_per_tick = 1;
+        timeout_ticks = (uint32_t)timeout_value.tv_sec * CLOCK_TICK_HZ;
+        if (timeout_value.tv_usec != 0) {
+            uint32_t fraction = ((uint32_t)timeout_value.tv_usec +
+                                 usec_per_tick - 1U) / usec_per_tick;
+            if (timeout_ticks > 0xFFFFFFFFU - fraction) return -E_TOO_BIG;
+            timeout_ticks += fraction;
+        }
+        timeout_mode = 1;
+    }
+    start_ticks = clock_ticks_read();
+    for (;;) {
+        int fd;
+        int ready = 0;
+        FD_ZERO(&read_out);
+        FD_ZERO(&write_out);
+        FD_ZERO(&except_out);
+        for (fd = 0; fd < nfds; fd++) {
+            int16_t events = 0;
+            int16_t revents = 0;
+            bool selected = 0;
+            if (FD_ISSET(fd, &read_in)) events |= POLLIN;
+            if (FD_ISSET(fd, &write_in)) events |= POLLOUT;
+            if (events == 0) continue;
+            ret = file_poll(fd, events, &revents);
+            if (ret != 0) goto select_done;
+            if ((revents & POLLNVAL) != 0) {
+                ret = -E_INVAL;
+                goto select_done;
+            }
+            if (FD_ISSET(fd, &read_in) &&
+                (revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+                FD_SET(fd, &read_out);
+                selected = 1;
+            }
+            if (FD_ISSET(fd, &write_in) &&
+                (revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+                FD_SET(fd, &write_out);
+                selected = 1;
+            }
+            if (selected) ready++;
+        }
+        if (ready != 0 || (timeout_mode && timeout_ticks == 0)) {
+            ret = ready;
+            break;
+        }
+        if (timeout_mode &&
+            (uint64_t)(clock_ticks_read() - start_ticks) >= timeout_ticks) {
+            ret = 0;
+            break;
+        }
+        if (do_sleep(1) == -E_INTR) {
+            ret = -E_INTR;
+            break;
+        }
+    }
+select_done:
+    if (ret >= 0 || ret == -E_INTR) {
+        if (sys_select_store_set(mm, (uintptr_t)arg[1], &read_out) != 0 ||
+            sys_select_store_set(mm, (uintptr_t)arg[2], &write_out) != 0 ||
+            sys_select_store_set(mm, (uintptr_t)arg[3], &except_out) != 0) {
+            return -E_INVAL;
+        }
+    }
+    return ret;
+}
+
 static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_exit]              sys_exit,
     [SYS_fork]              sys_fork,
@@ -1295,6 +1429,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_shutdown]          sys_shutdown,
     [SYS_fcntl]             sys_fcntl,
     [SYS_poll]              sys_poll,
+    [SYS_select]            sys_select,
 };
 
 #define NUM_SYSCALLS        ((sizeof(syscalls)) / (sizeof(syscalls[0])))

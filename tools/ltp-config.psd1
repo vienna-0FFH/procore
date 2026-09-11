@@ -37,6 +37,7 @@
         'fdsharetest',
         'pipetest',
         'polltest',
+        'selecttest',
         'vfstest',
         'nettest',
         'socketopttest',
