@@ -28,6 +28,7 @@
         'signalproctest',
         'signalstoptest',
         'fileiotest',
+        'timetest',
         'chdirtest',
         'clonetest',
         'mmaptest',

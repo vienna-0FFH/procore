@@ -62,6 +62,11 @@
 #define SYS_pwrite          162
 #define SYS_readv           163
 #define SYS_writev          164
+#define SYS_clock_gettime   165
+#define SYS_clock_getres    166
+#define SYS_gettimeofday    167
+#define SYS_nanosleep       168
+#define SYS_time            169
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -161,6 +166,39 @@ struct iovec {
     void *iov_base;
     size_t iov_len;
 };
+
+#define CLOCK_REALTIME             0
+#define CLOCK_MONOTONIC            1
+#define CLOCK_PROCESS_CPUTIME_ID   2
+#define CLOCK_THREAD_CPUTIME_ID    3
+#define CLOCK_REALTIME_COARSE      5
+#define CLOCK_MONOTONIC_COARSE     6
+#define CLOCK_MONOTONIC_RAW        4
+#define CLOCK_BOOTTIME             7
+
+#ifndef __UCORE_TIMESPEC_DEFINED
+#define __UCORE_TIMESPEC_DEFINED
+struct timespec {
+    int32_t tv_sec;
+    int32_t tv_nsec;
+};
+#endif
+
+#ifndef __UCORE_TIMEVAL_DEFINED
+#define __UCORE_TIMEVAL_DEFINED
+struct timeval {
+    int32_t tv_sec;
+    int32_t tv_usec;
+};
+#endif
+
+#ifndef __UCORE_TIMEZONE_DEFINED
+#define __UCORE_TIMEZONE_DEFINED
+struct timezone {
+    int32_t tz_minuteswest;
+    int32_t tz_dsttime;
+};
+#endif
 
 #define NO_FD               -0x9527     // invalid fd
 

@@ -47,6 +47,11 @@ int sys_putc(int c);
 int sys_pgdir(void);
 int sys_sleep(unsigned int time);
 size_t sys_gettime(void);
+int sys_clock_gettime(int clock_id, struct timespec *tp);
+int sys_clock_getres(int clock_id, struct timespec *res);
+int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
+int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+int sys_time(int32_t *store);
 
 struct stat;
 struct dirent;

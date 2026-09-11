@@ -255,8 +255,11 @@ trap_dispatch(struct trapframe *tf) {
         timer_cpu = smp_current_cpu();
         net_poll();
         smp_record_tick(timer_cpu, current != NULL && current->pid == 0);
+        if (current != NULL && current->pid != 0) {
+            current->cpu_ticks++;
+        }
         if (timer_cpu == 0) {
-            ticks ++;
+            clock_tick();
             assert(current != NULL);
             run_timer_list();
             if (SMP_BALANCE_INTERVAL != 0 &&

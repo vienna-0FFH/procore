@@ -351,6 +351,204 @@ static uint32_t
 sys_gettime(uint32_t arg[]) {
     return (int)ticks;
 }
+
+static bool
+sys_clock_id_supported(int clock_id) {
+    switch (clock_id) {
+    case CLOCK_REALTIME:
+    case CLOCK_MONOTONIC:
+    case CLOCK_PROCESS_CPUTIME_ID:
+    case CLOCK_THREAD_CPUTIME_ID:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_REALTIME_COARSE:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void
+sys_clock_ticks_to_timespec(uint64_t value, struct timespec *store) {
+    uint32_t seconds_low = 0;
+    uint32_t seconds_high = 0;
+    uint32_t remainder = 0;
+    uint32_t high = (uint32_t)(value >> 32);
+    uint32_t low = (uint32_t)value;
+    uint32_t i;
+    uint32_t nanoseconds;
+    /* Divide a 64-bit tick count by the configured 32-bit frequency without
+     * pulling a software 64-bit division routine into the kernel image. */
+    for (i = 32; i-- > 0;) {
+        uint64_t shifted = ((uint64_t)remainder << 1) |
+                           ((high >> i) & 1U);
+        if (shifted >= CLOCK_TICK_HZ) {
+            remainder = (uint32_t)(shifted - CLOCK_TICK_HZ);
+            seconds_high |= 1U << i;
+        } else {
+            remainder = (uint32_t)shifted;
+        }
+    }
+    for (i = 32; i-- > 0;) {
+        uint64_t shifted = ((uint64_t)remainder << 1) |
+                           ((low >> i) & 1U);
+        if (shifted >= CLOCK_TICK_HZ) {
+            remainder = (uint32_t)(shifted - CLOCK_TICK_HZ);
+            seconds_low |= 1U << i;
+        } else {
+            remainder = (uint32_t)shifted;
+        }
+    }
+    if (seconds_high != 0 || seconds_low > 0x7FFFFFFFU) {
+        store->tv_sec = 0x7FFFFFFF;
+        store->tv_nsec = 999999999;
+        return;
+    }
+    nanoseconds = remainder * CLOCK_NSEC_PER_TICK;
+    store->tv_sec = (int32_t)seconds_low;
+    store->tv_nsec = (int32_t)nanoseconds;
+}
+
+static int
+sys_clock_gettime(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct timespec value;
+    uint64_t clock_value;
+    int clock_id = (int)arg[0];
+    if (mm == NULL || arg[1] == 0 || !sys_clock_id_supported(clock_id)) {
+        return -E_INVAL;
+    }
+    if (clock_id == CLOCK_PROCESS_CPUTIME_ID ||
+        clock_id == CLOCK_THREAD_CPUTIME_ID) {
+        clock_value = current->cpu_ticks;
+    } else if (clock_id == CLOCK_REALTIME ||
+               clock_id == CLOCK_REALTIME_COARSE) {
+        clock_value = clock_realtime_ticks_read();
+    } else {
+        clock_value = clock_ticks_read();
+    }
+    sys_clock_ticks_to_timespec(clock_value, &value);
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &value, sizeof(value))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
+sys_clock_getres(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct timespec value;
+    int clock_id = (int)arg[0];
+    if (mm == NULL || arg[1] == 0 || !sys_clock_id_supported(clock_id)) {
+        return -E_INVAL;
+    }
+    value.tv_sec = 0;
+    value.tv_nsec = (int32_t)(1000000000U / CLOCK_TICK_HZ);
+    if (value.tv_nsec == 0) value.tv_nsec = 1;
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &value, sizeof(value))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
+sys_gettimeofday(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct timespec realtime;
+    struct timeval value;
+    struct timezone zone;
+    if (mm == NULL) return -E_INVAL;
+    if (arg[0] != 0 && !user_mem_check(mm, (uintptr_t)arg[0],
+                                       sizeof(value), 1)) return -E_INVAL;
+    if (arg[1] != 0 && !user_mem_check(mm, (uintptr_t)arg[1],
+                                       sizeof(zone), 1)) return -E_INVAL;
+    sys_clock_ticks_to_timespec(clock_realtime_ticks_read(), &realtime);
+    value.tv_sec = realtime.tv_sec;
+    value.tv_usec = realtime.tv_nsec / 1000;
+    zone.tz_minuteswest = 0;
+    zone.tz_dsttime = 0;
+    lock_mm(mm);
+    if (arg[0] != 0 && !copy_to_user(mm, (void *)arg[0], &value,
+                                     sizeof(value))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    if (arg[1] != 0 && !copy_to_user(mm, (void *)arg[1], &zone,
+                                     sizeof(zone))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
+sys_nanosleep(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct timespec request, remaining;
+    uint32_t requested_ticks, fractional_ticks;
+    uint64_t start_ticks, elapsed_ticks;
+    int ret;
+    if (mm == NULL || arg[0] == 0) return -E_INVAL;
+    lock_mm(mm);
+    ret = copy_from_user(mm, &request, (void *)arg[0], sizeof(request), 0);
+    if (ret && arg[1] != 0) ret = user_mem_check(mm, (uintptr_t)arg[1],
+                                                 sizeof(remaining), 1);
+    unlock_mm(mm);
+    if (!ret || request.tv_sec < 0 || request.tv_nsec < 0 ||
+        request.tv_nsec >= 1000000000) return -E_INVAL;
+    if ((uint32_t)request.tv_sec > 0xFFFFFFFFU / CLOCK_TICK_HZ)
+        return -E_TOO_BIG;
+    requested_ticks = (uint32_t)request.tv_sec * CLOCK_TICK_HZ;
+    fractional_ticks = (uint32_t)request.tv_nsec;
+    fractional_ticks = (fractional_ticks + CLOCK_NSEC_PER_TICK - 1U) /
+                       CLOCK_NSEC_PER_TICK;
+    if (requested_ticks > 0xFFFFFFFFU - fractional_ticks)
+        return -E_TOO_BIG;
+    requested_ticks += fractional_ticks;
+    start_ticks = clock_ticks_read();
+    ret = requested_ticks == 0 ? 0 : do_sleep((unsigned int)requested_ticks);
+    elapsed_ticks = clock_ticks_read() - start_ticks;
+    if (elapsed_ticks >= requested_ticks) {
+        remaining.tv_sec = 0;
+        remaining.tv_nsec = 0;
+    } else {
+        sys_clock_ticks_to_timespec(requested_ticks - elapsed_ticks, &remaining);
+    }
+    if (arg[1] != 0) {
+        lock_mm(mm);
+        if (!copy_to_user(mm, (void *)arg[1], &remaining, sizeof(remaining)))
+            ret = -E_INVAL;
+        unlock_mm(mm);
+    }
+    return ret;
+}
+
+static int
+sys_time(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    uint64_t seconds = clock_realtime_seconds();
+    int32_t value = seconds > 0x7FFFFFFFULL ? 0x7FFFFFFF : (int32_t)seconds;
+    if (arg[0] != 0) {
+        if (mm == NULL || !user_mem_check(mm, (uintptr_t)arg[0],
+                                           sizeof(value), 1)) return -E_INVAL;
+        lock_mm(mm);
+        if (!copy_to_user(mm, (void *)arg[0], &value, sizeof(value))) {
+            unlock_mm(mm);
+            return -E_INVAL;
+        }
+        unlock_mm(mm);
+    }
+    return value;
+}
+
 static uint32_t
 sys_lab6_set_priority(uint32_t arg[])
 {
@@ -870,6 +1068,11 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_putc]              sys_putc,
     [SYS_pgdir]             sys_pgdir,
     [SYS_gettime]           sys_gettime,
+    [SYS_clock_gettime]     sys_clock_gettime,
+    [SYS_clock_getres]      sys_clock_getres,
+    [SYS_gettimeofday]      sys_gettimeofday,
+    [SYS_nanosleep]         sys_nanosleep,
+    [SYS_time]              sys_time,
     [SYS_lab6_set_priority] sys_lab6_set_priority,
     [SYS_sleep]             sys_sleep,
     [SYS_open]              sys_open,

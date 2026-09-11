@@ -3,10 +3,21 @@
 
 #include <time.h>
 
+#ifndef __UCORE_TIMEVAL_DEFINED
+#define __UCORE_TIMEVAL_DEFINED
 struct timeval {
-    long tv_sec;
-    long tv_usec;
+    int tv_sec;
+    int tv_usec;
 };
+#endif
+
+#ifndef __UCORE_TIMEZONE_DEFINED
+#define __UCORE_TIMEZONE_DEFINED
+struct timezone {
+    int tz_minuteswest;
+    int tz_dsttime;
+};
+#endif
 
 int gettimeofday(struct timeval *, void *);
 

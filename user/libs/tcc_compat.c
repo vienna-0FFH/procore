@@ -434,32 +434,15 @@ int sem_wait(tcc_sem_t *sem) {
 }
 int sem_post(tcc_sem_t *sem) { sem->value++; return 0; }
 
-typedef long tcc_time_t;
+typedef int32_t tcc_time_t;
 struct tcc_tm {
     int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year;
 };
-tcc_time_t time(tcc_time_t *store) {
-    tcc_time_t value = (tcc_time_t)(gettime_msec() / 1000U);
-    if (store != NULL) *store = value;
-    return value;
-}
 struct tcc_tm *localtime(const tcc_time_t *value) {
     static struct tcc_tm zero;
     (void)value;
     memset(&zero, 0, sizeof(zero));
     return &zero;
-}
-
-int
-gettimeofday(void *tv, void *tz) {
-    uint32_t msec = gettime_msec();
-    long *fields = (long *)tv;
-    (void)tz;
-    if (fields != NULL) {
-        fields[0] = (long)(msec / 1000U);
-        fields[1] = (long)((msec % 1000U) * 1000U);
-    }
-    return 0;
 }
 
 void abort(void) { exit(-1); }

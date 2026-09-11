@@ -256,6 +256,31 @@ sys_gettime(void) {
 }
 
 int
+sys_clock_gettime(int clock_id, struct timespec *tp) {
+    return syscall2(SYS_clock_gettime, clock_id, (uintptr_t)tp);
+}
+
+int
+sys_clock_getres(int clock_id, struct timespec *res) {
+    return syscall2(SYS_clock_getres, clock_id, (uintptr_t)res);
+}
+
+int
+sys_gettimeofday(struct timeval *tv, struct timezone *tz) {
+    return syscall2(SYS_gettimeofday, (uintptr_t)tv, (uintptr_t)tz);
+}
+
+int
+sys_nanosleep(const struct timespec *req, struct timespec *rem) {
+    return syscall2(SYS_nanosleep, (uintptr_t)req, (uintptr_t)rem);
+}
+
+int
+sys_time(int32_t *store) {
+    return syscall1(SYS_time, (uintptr_t)store);
+}
+
+int
 sys_exec(const char *name, int argc, const char **argv) {
     return syscall3(SYS_exec, (uintptr_t)name, argc, (uintptr_t)argv);
 }

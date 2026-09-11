@@ -113,6 +113,7 @@ alloc_proc(void) {
         proc->state = PROC_UNINIT;
         proc->pid = -1;
         proc->runs = 0;
+        proc->cpu_ticks = 0;
         proc->kstack = 0;
         proc->need_resched = 0;
         proc->parent = NULL;

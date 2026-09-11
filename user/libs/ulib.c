@@ -137,6 +137,31 @@ gettime_msec(void) {
 }
 
 int
+clock_gettime(int clock_id, struct timespec *tp) {
+    return sys_clock_gettime(clock_id, tp);
+}
+
+int
+clock_getres(int clock_id, struct timespec *res) {
+    return sys_clock_getres(clock_id, res);
+}
+
+int
+gettimeofday(struct timeval *tv, struct timezone *tz) {
+    return sys_gettimeofday(tv, tz);
+}
+
+int
+nanosleep(const struct timespec *req, struct timespec *rem) {
+    return sys_nanosleep(req, rem);
+}
+
+int32_t
+time(int32_t *store) {
+    return (int32_t)sys_time(store);
+}
+
+int
 __exec(const char *name, const char **argv) {
     int argc = 0;
     while (argv[argc] != NULL) {

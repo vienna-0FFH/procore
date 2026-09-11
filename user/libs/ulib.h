@@ -47,6 +47,11 @@ uintptr_t brk(uintptr_t newbrk);
 void print_pgdir(void);
 int sleep(unsigned int time);
 unsigned int gettime_msec(void);
+int clock_gettime(int clock_id, struct timespec *tp);
+int clock_getres(int clock_id, struct timespec *res);
+int gettimeofday(struct timeval *tv, struct timezone *tz);
+int nanosleep(const struct timespec *req, struct timespec *rem);
+int32_t time(int32_t *store);
 int __exec(const char *name, const char **argv);
 
 #define __exec0(name, path, ...)                \
