@@ -22,10 +22,12 @@ int sysfile_pwrite(int fd, const void *base, size_t len, off_t offset);
 int sysfile_readv(int fd, const struct iovec *iov, size_t count);
 int sysfile_writev(int fd, const struct iovec *iov, size_t count);
 int sysfile_chdir(const char *path);                            // change DIR  
+int sysfile_fchdir(int fd);
 int sysfile_mkdir(const char *path);                            // create DIR
 int sysfile_link(const char *path1, const char *path2);         // set a path1's link as path2
 int sysfile_rename(const char *path1, const char *path2);       // rename file
 int sysfile_unlink(const char *path);                           // unlink a path
+int sysfile_rmdir(const char *path);
 int sysfile_getcwd(char *buf, size_t len);                      // get current working directory
 int sysfile_getdirentry(int fd, struct dirent *direntp);        // get the file entry in DIR 
 int sysfile_dup(int fd1, int fd2);                              // duplicate file

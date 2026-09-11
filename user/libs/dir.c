@@ -45,6 +45,11 @@ chdir(const char *path) {
 }
 
 int
+fchdir(int fd) {
+    return sys_fchdir(fd);
+}
+
+int
 mkdir(const char *path) {
     return sys_mkdir(path);
 }
@@ -57,6 +62,11 @@ link(const char *old_path, const char *new_path) {
 int
 unlink(const char *path) {
     return sys_unlink(path);
+}
+
+int
+rmdir(const char *path) {
+    return sys_rmdir(path);
 }
 
 int

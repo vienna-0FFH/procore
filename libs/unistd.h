@@ -75,6 +75,9 @@
 #define SYS_getegid         175
 #define SYS_getresuid       176
 #define SYS_getresgid       177
+#define SYS_wait4           178
+#define SYS_fchdir          179
+#define SYS_rmdir           180
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -103,6 +106,8 @@
 #define CLONE_VM            0x00000100  // set if VM shared between processes
 #define CLONE_THREAD        0x00000200  // thread group
 #define CLONE_FS            0x00000800  // set if shared between processes
+
+#define WNOHANG             0x00000001
 
 /* Anonymous mappings; file-backed mappings require a page-cache contract. */
 #define PROT_NONE           0x0

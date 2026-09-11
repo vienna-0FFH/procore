@@ -857,6 +857,20 @@ file_fstat(int fd, struct stat *stat) {
 }
 
 int
+file_chdir(int fd) {
+    struct open_file *description;
+    int ret = fd_acquire(fd, &description);
+    if (ret != 0) return ret;
+    if (description->kind != OPEN_FILE_INODE) {
+        open_file_put(description);
+        return -E_NOTDIR;
+    }
+    ret = vfs_set_curdir(description->object.node);
+    open_file_put(description);
+    return ret;
+}
+
+int
 file_ftruncate(int fd, off_t length) {
     struct open_file *description;
     int ret;

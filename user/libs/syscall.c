@@ -68,6 +68,11 @@ sys_wait(int pid, int *store) {
 }
 
 int
+sys_wait4(int pid, int *store, uint32_t options) {
+    return syscall3(SYS_wait4, pid, (uintptr_t)store, options);
+}
+
+int
 sys_yield(void) {
     return syscall0(SYS_yield);
 }
@@ -385,6 +390,11 @@ sys_chdir(const char *path) {
 }
 
 int
+sys_fchdir(int fd) {
+    return syscall1(SYS_fchdir, fd);
+}
+
+int
 sys_mkdir(const char *path) {
     return syscall1(SYS_mkdir, (uintptr_t)path);
 }
@@ -397,6 +407,11 @@ sys_link(const char *old_path, const char *new_path) {
 int
 sys_unlink(const char *path) {
     return syscall1(SYS_unlink, (uintptr_t)path);
+}
+
+int
+sys_rmdir(const char *path) {
+    return syscall1(SYS_rmdir, (uintptr_t)path);
 }
 
 int

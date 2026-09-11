@@ -120,6 +120,7 @@ int vfs_symlink(char *old_path, char *new_path);
 int vfs_readlink(char *path, struct iobuf *iob);
 int vfs_mkdir(char *path);
 int vfs_unlink(char *path);
+int vfs_rmdir(char *path);
 int vfs_rename(char *old_path, char *new_path);
 int vfs_chdir(char *path);
 int vfs_getcwd(struct iobuf *iob);
@@ -188,4 +189,3 @@ int vfs_unmount(const char *devname);
 int vfs_unmount_all(void);
 
 #endif /* !__KERN_FS_VFS_VFS_H__ */
-

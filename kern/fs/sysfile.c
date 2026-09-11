@@ -439,6 +439,11 @@ sysfile_chdir(const char *__path) {
     return ret;
 }
 
+int
+sysfile_fchdir(int fd) {
+    return file_chdir(fd);
+}
+
 /* sysfile_mkdir - create a directory */
 int
 sysfile_mkdir(const char *__path) {
@@ -495,6 +500,16 @@ sysfile_unlink(const char *__path) {
         return ret;
     }
     ret = vfs_unlink(path);
+    kfree(path);
+    return ret;
+}
+
+int
+sysfile_rmdir(const char *__path) {
+    int ret;
+    char *path;
+    if ((ret = copy_path(&path, __path)) != 0) return ret;
+    ret = vfs_rmdir(path);
     kfree(path);
     return ret;
 }

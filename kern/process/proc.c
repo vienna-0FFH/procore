@@ -1033,6 +1033,11 @@ do_yield(void) {
 // NOTE: only after do_wait function, all resources of the child proces are free.
 int
 do_wait(int pid, int *code_store) {
+    return do_wait_options(pid, code_store, 0);
+}
+
+int
+do_wait_options(int pid, int *code_store, uint32_t options) {
     struct mm_struct *mm = current->mm;
     struct proc_struct *proc;
     bool intr_flag;
@@ -1081,13 +1086,13 @@ repeat:
             }
         }
     }
-    if (haskid) {
+    if (haskid && (options & WNOHANG) == 0) {
         current->state = PROC_SLEEPING;
         current->wait_state = WT_CHILD;
     }
     spin_unlock(&proc_lock);
     local_intr_restore(intr_flag);
-    if (haskid) {
+    if (haskid && (options & WNOHANG) == 0) {
         schedule();
         if (current->flags & PF_EXITING) {
             do_exit(-E_KILLED);
@@ -1097,7 +1102,7 @@ repeat:
         }
         goto repeat;
     }
-    return -E_BAD_PROC;
+    return (haskid && (options & WNOHANG) != 0) ? 0 : -E_BAD_PROC;
 
 found_locked:
     if (proc == idleproc || proc == initproc) {

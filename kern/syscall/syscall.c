@@ -99,6 +99,15 @@ sys_wait(uint32_t arg[]) {
 }
 
 static int
+sys_wait4(uint32_t arg[]) {
+    int pid = (int)arg[0];
+    int *store = (int *)arg[1];
+    uint32_t options = arg[2];
+    if ((options & ~WNOHANG) != 0) return -E_INVAL;
+    return do_wait_options(pid, store, options);
+}
+
+static int
 sys_exec(uint32_t arg[]) {
     const char *name = (const char *)arg[0];
     int argc = (int)arg[1];
@@ -775,6 +784,11 @@ sys_chdir(uint32_t arg[]) {
 }
 
 static int
+sys_fchdir(uint32_t arg[]) {
+    return sysfile_fchdir((int)arg[0]);
+}
+
+static int
 sys_mkdir(uint32_t arg[]) {
     const char *path = (const char *)arg[0];
     return sysfile_mkdir(path);
@@ -791,6 +805,11 @@ static int
 sys_unlink(uint32_t arg[]) {
     const char *path = (const char *)arg[0];
     return sysfile_unlink(path);
+}
+
+static int
+sys_rmdir(uint32_t arg[]) {
+    return sysfile_rmdir((const char *)arg[0]);
 }
 
 static int
@@ -1149,6 +1168,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_fork]              sys_fork,
     [SYS_clone]             sys_clone,
     [SYS_wait]              sys_wait,
+    [SYS_wait4]             sys_wait4,
     [SYS_exec]              sys_exec,
     [SYS_yield]             sys_yield,
     [SYS_kill]              sys_kill,
@@ -1200,9 +1220,11 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_fstat]             sys_fstat,
     [SYS_fsync]             sys_fsync,
     [SYS_chdir]             sys_chdir,
+    [SYS_fchdir]            sys_fchdir,
     [SYS_mkdir]             sys_mkdir,
     [SYS_link]              sys_link,
     [SYS_unlink]            sys_unlink,
+    [SYS_rmdir]             sys_rmdir,
     [SYS_rename]            sys_rename,
     [SYS_getcwd]            sys_getcwd,
     [SYS_getdirentry]       sys_getdirentry,

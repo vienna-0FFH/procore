@@ -144,6 +144,29 @@ vfs_unlink(char *path) {
     return ret;
 }
 
+int
+vfs_rmdir(char *path) {
+    int ret;
+    char *name;
+    struct inode *dir;
+    if ((ret = vfs_lookup_parent(path, &dir, &name)) != 0) {
+        return ret;
+    }
+    if (*name == '\0' || strchr(name, '/') != NULL) {
+        ret = -E_INVAL;
+    }
+    else if ((ret = vfs_require_dir(dir)) == 0) {
+        if (!check_inode_type(dir, sfs_inode)) {
+            ret = -E_UNIMP;
+        }
+        else {
+            ret = sfs_rmdir(dir, name);
+        }
+    }
+    vop_ref_dec(dir);
+    return ret;
+}
+
 // unimplement
 int
 vfs_rename(char *old_path, char *new_path) {

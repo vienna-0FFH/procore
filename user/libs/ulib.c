@@ -58,6 +58,11 @@ waitpid(int pid, int *store) {
     return sys_wait(pid, store);
 }
 
+int
+wait4(int pid, int *store, uint32_t options) {
+    return sys_wait4(pid, store, options);
+}
+
 void
 yield(void) {
     sys_yield();

@@ -38,6 +38,7 @@ int file_pwrite(int fd, const void *base, size_t len, off_t offset,
                 size_t *copied_store);
 int file_seek(int fd, off_t pos, int whence);
 int file_fstat(int fd, struct stat *stat);
+int file_chdir(int fd);
 int file_ftruncate(int fd, off_t length);
 int file_fsync(int fd);
 int file_getdirentry(int fd, struct dirent *dirent);

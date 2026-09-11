@@ -24,6 +24,8 @@ int readv(int fd, const struct iovec *iov, size_t count);
 int writev(int fd, const struct iovec *iov, size_t count);
 int dup(int fd);
 int dup2(int fd1, int fd2);
+int fchdir(int fd);
+int rmdir(const char *path);
 int pipe(int *fd_store);
 int pipe2(int *fd_store, uint32_t flags);
 int mkfifo(const char *name, uint32_t open_flags);

@@ -30,6 +30,7 @@
         'fileiotest',
         'timetest',
         'sysinfotest',
+        'waitvfstest',
         'chdirtest',
         'clonetest',
         'mmaptest',

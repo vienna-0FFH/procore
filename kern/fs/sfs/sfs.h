@@ -134,6 +134,7 @@ int sfs_create(struct inode *dir, const char *name, bool excl,
 int sfs_mkdir(struct inode *dir, const char *name);
 int sfs_link(struct inode *dir, const char *name, struct inode *target);
 int sfs_unlink(struct inode *dir, const char *name);
+int sfs_rmdir(struct inode *dir, const char *name);
 int sfs_rename(struct inode *old_dir, const char *old_name,
                struct inode *new_dir, const char *new_name);
 

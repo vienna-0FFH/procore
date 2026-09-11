@@ -915,6 +915,50 @@ sfs_unlink(struct inode *dir, const char *name) {
 }
 
 int
+sfs_rmdir(struct inode *dir, const char *name) {
+    struct sfs_fs *sfs;
+    struct sfs_inode *sdir, *starget;
+    struct inode *target = NULL;
+    uint32_t ino;
+    int slot, ret;
+    if (dir == NULL || name == NULL || name[0] == '\0' ||
+        strlen(name) > SFS_MAX_FNAME_LEN || strchr(name, '/') != NULL ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+        !check_inode_type(dir, sfs_inode)) return -E_INVAL;
+    sfs = fsop_info(vop_fs(dir), sfs);
+    sdir = vop_info(dir, sfs_inode);
+    if (sdir->din->type != SFS_TYPE_DIR) return -E_NOTDIR;
+    down(&(sfs->mutex_sem));
+    lock_sin(sdir);
+    ret = sfs_dirent_search_nolock(sfs, sdir, name, &ino, &slot, NULL);
+    unlock_sin(sdir);
+    if (ret == 0) ret = sfs_load_inode(sfs, &target, ino);
+    lock_sfs_fs(sfs);
+    lock_sin(sdir);
+    if (ret == 0) {
+        starget = vop_info(target, sfs_inode);
+        lock_sin(starget);
+        if (starget->din->type != SFS_TYPE_DIR) ret = -E_NOTDIR;
+        else if (!sfs_dir_empty_nolock(sfs, starget)) ret = -E_NOTEMPTY;
+        else {
+            ret = sfs_dirent_unlink_nolock(sfs, sdir, slot, starget);
+            if (ret == 0) {
+                (void)sfs_dirent_unlink_nolock(sfs, starget,
+                                               SFS_DIR_DOTDOT_SLOT, sdir);
+                (void)sfs_dirent_unlink_nolock(sfs, starget,
+                                               SFS_DIR_DOT_SLOT, starget);
+            }
+        }
+        unlock_sin(starget);
+    }
+    unlock_sin(sdir);
+    unlock_sfs_fs(sfs);
+    up(&(sfs->mutex_sem));
+    if (target != NULL) vop_ref_dec(target);
+    return ret;
+}
+
+int
 sfs_rename(struct inode *old_dir, const char *old_name,
            struct inode *new_dir, const char *new_name) {
     struct sfs_fs *sfs;
