@@ -63,6 +63,14 @@ getpeername(int fd, struct sockaddr_in *address, size_t length) {
     return sys_getpeername(fd, address, length);
 }
 
+int getsockopt(int fd, int level, int option, void *value, size_t *length) {
+    return sys_getsockopt(fd, level, option, value, length);
+}
+
+int setsockopt(int fd, int level, int option, const void *value, size_t length) {
+    return sys_setsockopt(fd, level, option, value, length);
+}
+
 int
 poll(struct pollfd *fds, size_t count, int timeout_ms) {
     return sys_poll(fds, count, timeout_ms);

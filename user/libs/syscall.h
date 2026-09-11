@@ -47,6 +47,8 @@ int sys_send(int fd, const void *data, size_t length);
 int sys_recv(int fd, void *data, size_t length);
 int sys_getsockname(int fd, struct sockaddr_in *address, size_t length);
 int sys_getpeername(int fd, struct sockaddr_in *address, size_t length);
+int sys_getsockopt(int fd, int level, int option, void *value, size_t *length);
+int sys_setsockopt(int fd, int level, int option, const void *value, size_t length);
 int sys_fcntl(int fd, int command, uint32_t argument);
 int sys_poll(struct pollfd *fds, size_t count, int timeout_ms);
 int sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);

@@ -1092,6 +1092,53 @@ sys_getpeername(uint32_t arg[]) {
 }
 
 static int
+sys_getsockopt(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    int level = (int)arg[1];
+    int option = (int)arg[2];
+    uint32_t length;
+    int value;
+    int ret;
+    if (mm == NULL || arg[3] == 0 || arg[4] == 0) return -E_INVAL;
+    lock_mm(mm);
+    ret = copy_from_user(mm, &length, (void *)arg[4], sizeof(length), 1);
+    unlock_mm(mm);
+    if (!ret || length < sizeof(value)) return -E_INVAL;
+    ret = file_socket_getsockopt((int)arg[0], level, option, &value,
+                                 (size_t *)&length);
+    if (ret != 0) return ret;
+    lock_mm(mm);
+    ret = copy_to_user(mm, (void *)arg[3], &value, sizeof(value)) &&
+          copy_to_user(mm, (void *)arg[4], &length, sizeof(length)) ? 0 : -E_INVAL;
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
+sys_setsockopt(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    void *value;
+    size_t length = (size_t)arg[4];
+    int ret;
+    if (mm == NULL || arg[3] == 0 || length < sizeof(int) || length > 256) {
+        return -E_INVAL;
+    }
+    value = kmalloc(length);
+    if (value == NULL) return -E_NO_MEM;
+    lock_mm(mm);
+    ret = copy_from_user(mm, value, (void *)arg[3], length, 0);
+    unlock_mm(mm);
+    if (!ret) {
+        kfree(value);
+        return -E_INVAL;
+    }
+    ret = file_socket_setsockopt((int)arg[0], (int)arg[1], (int)arg[2],
+                                 value, length);
+    kfree(value);
+    return ret;
+}
+
+static int
 sys_fcntl(uint32_t arg[]) {
     return file_fcntl((int)arg[0], (int)arg[1], arg[2]);
 }
@@ -1241,6 +1288,8 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_recv]              sys_recv,
     [SYS_getsockname]       sys_getsockname,
     [SYS_getpeername]       sys_getpeername,
+    [SYS_getsockopt]        sys_getsockopt,
+    [SYS_setsockopt]        sys_setsockopt,
     [SYS_listen]            sys_listen,
     [SYS_accept]            sys_accept,
     [SYS_shutdown]          sys_shutdown,

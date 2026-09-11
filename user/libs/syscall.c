@@ -228,6 +228,15 @@ sys_getpeername(int fd, struct sockaddr_in *address, size_t length) {
     return syscall3(SYS_getpeername, fd, (uintptr_t)address, length);
 }
 
+int sys_getsockopt(int fd, int level, int option, void *value, size_t *length) {
+    return syscall5(SYS_getsockopt, fd, level, option, (uintptr_t)value,
+                    (uintptr_t)length);
+}
+
+int sys_setsockopt(int fd, int level, int option, const void *value, size_t length) {
+    return syscall5(SYS_setsockopt, fd, level, option, (uintptr_t)value, length);
+}
+
 int
 sys_fcntl(int fd, int command, uint32_t argument) {
     return syscall3(SYS_fcntl, fd, command, argument);

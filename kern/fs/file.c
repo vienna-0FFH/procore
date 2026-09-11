@@ -1312,3 +1312,29 @@ file_socket_getpeername(int fd, struct sockaddr_in *address) {
     }
     return ret;
 }
+
+int
+file_socket_getsockopt(int fd, int level, int option,
+                       void *value, size_t *length_store) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_getsockopt(description->object.socket, level, option,
+                                    value, length_store);
+        open_file_put(description);
+    }
+    return ret;
+}
+
+int
+file_socket_setsockopt(int fd, int level, int option,
+                       const void *value, size_t length) {
+    struct open_file *description;
+    int ret = socket_file_acquire(fd, &description);
+    if (ret == 0) {
+        ret = net_socket_setsockopt(description->object.socket, level, option,
+                                    value, length);
+        open_file_put(description);
+    }
+    return ret;
+}

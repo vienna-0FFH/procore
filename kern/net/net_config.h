@@ -69,6 +69,10 @@
 #define NET_IP_TTL                   64U
 #endif
 
+#ifndef NET_DEFAULT_SOCKET_BUFFER
+#define NET_DEFAULT_SOCKET_BUFFER    16384U
+#endif
+
 #ifndef NET_TCP_MSS
 #define NET_TCP_MSS                  1400U
 #endif
@@ -167,6 +171,9 @@
 #endif
 #if NET_TCP_SHUTDOWN_TIMEOUT < 1
 #error "TCP shutdown timeout must be positive"
+#endif
+#if NET_DEFAULT_SOCKET_BUFFER < 1
+#error "default socket buffer must be positive"
 #endif
 
 #endif /* !__KERN_NET_CONFIG_H__ */

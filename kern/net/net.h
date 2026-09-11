@@ -80,6 +80,14 @@ struct net_socket {
     uint32_t tcp_snd_wnd;
     uint32_t tcp_cwnd;
     uint32_t tcp_ssthresh;
+    uint32_t rcvbuf;
+    uint32_t sndbuf;
+    uint32_t ip_ttl;
+    uint32_t tcp_maxseg;
+    bool reuseaddr;
+    bool broadcast;
+    bool keepalive;
+    bool nodelay;
     uint32_t tcp_last_ack;
     unsigned int tcp_dup_acks;
     volatile bool closed;
@@ -113,6 +121,10 @@ int net_socket_getsockname(struct net_socket *socket,
                            struct sockaddr_in *address);
 int net_socket_getpeername(struct net_socket *socket,
                            struct sockaddr_in *address);
+int net_socket_getsockopt(struct net_socket *socket, int level, int option,
+                          void *value, size_t *length_store);
+int net_socket_setsockopt(struct net_socket *socket, int level, int option,
+                          const void *value, size_t length);
 int net_socket_poll(struct net_socket *socket, int16_t events,
                     int16_t *revents_store);
 void net_get_stats(struct net_stats *stats);

@@ -78,6 +78,8 @@
 #define SYS_wait4           178
 #define SYS_fchdir          179
 #define SYS_rmdir           180
+#define SYS_getsockopt      181
+#define SYS_setsockopt      182
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -266,6 +268,22 @@ struct timezone {
 #define SOCK_STREAM         1
 #define IPPROTO_UDP         17
 #define IPPROTO_TCP         6
+#define IPPROTO_IP          0
+#define SOL_SOCKET          1
+#define SO_DEBUG            1
+#define SO_REUSEADDR        2
+#define SO_TYPE             3
+#define SO_ERROR            4
+#define SO_DONTROUTE        5
+#define SO_BROADCAST        6
+#define SO_SNDBUF           7
+#define SO_RCVBUF           8
+#define SO_KEEPALIVE        9
+#define SO_RCVLOWAT         18
+#define SO_SNDLOWAT         19
+#define IP_TTL              2
+#define TCP_NODELAY         1
+#define TCP_MAXSEG          2
 #define INADDR_ANY          0U
 #define INADDR_LOOPBACK     0x0100007FU
 

@@ -39,6 +39,7 @@
         'polltest',
         'vfstest',
         'nettest',
+        'socketopttest',
         'netconnecttest',
         'tcplistentest',
         'affinitytest',

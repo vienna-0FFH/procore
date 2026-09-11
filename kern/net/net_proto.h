@@ -101,7 +101,7 @@ int net_build_udp_frame(uint8_t *frame, size_t capacity,
                         uint32_t source_ip, uint32_t destination_ip,
                         uint16_t source_port, uint16_t destination_port,
                         const void *payload, size_t payload_length,
-                        uint16_t identification);
+                        uint16_t identification, uint8_t ttl);
 
 int net_parse_udp_frame(const uint8_t *frame, size_t length,
                         uint32_t local_ip, uint16_t *source_port,
@@ -117,7 +117,7 @@ int net_build_tcp_frame(uint8_t *frame, size_t capacity,
                         uint32_t sequence, uint32_t acknowledgement,
                         uint8_t flags, uint16_t window,
                         const void *payload, size_t payload_length,
-                        uint16_t identification);
+                        uint16_t identification, uint8_t ttl);
 
 int net_parse_tcp_frame(const uint8_t *frame, size_t length,
                         uint32_t local_ip, uint16_t *source_port,

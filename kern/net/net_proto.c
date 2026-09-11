@@ -124,7 +124,7 @@ net_build_udp_frame(uint8_t *frame, size_t capacity,
                     uint32_t source_ip, uint32_t destination_ip,
                     uint16_t source_port, uint16_t destination_port,
                     const void *payload, size_t payload_length,
-                    uint16_t identification) {
+                    uint16_t identification, uint8_t ttl) {
     struct net_eth_header *ethernet;
     struct net_ipv4_header *ip;
     struct net_udp_header *udp;
@@ -149,7 +149,7 @@ net_build_udp_frame(uint8_t *frame, size_t capacity,
     ip->total_length = htons((uint16_t)ip_length);
     ip->identification = htons(identification);
     ip->fragment_offset = 0;
-    ip->ttl = NET_IP_TTL;
+    ip->ttl = ttl == 0 ? NET_IP_TTL : ttl;
     ip->protocol = NET_IPPROTO_UDP;
     ip->source = source_ip;
     ip->destination = destination_ip;
@@ -267,7 +267,7 @@ net_build_tcp_frame(uint8_t *frame, size_t capacity,
                     uint32_t sequence, uint32_t acknowledgement,
                     uint8_t flags, uint16_t window,
                     const void *payload, size_t payload_length,
-                    uint16_t identification) {
+                     uint16_t identification, uint8_t ttl) {
     struct net_eth_header *ethernet;
     struct net_ipv4_header *ip;
     struct net_tcp_header *tcp;
@@ -290,7 +290,7 @@ net_build_tcp_frame(uint8_t *frame, size_t capacity,
     ip->version_ihl = 0x45;
     ip->total_length = htons((uint16_t)ip_length);
     ip->identification = htons(identification);
-    ip->ttl = NET_IP_TTL;
+    ip->ttl = ttl == 0 ? NET_IP_TTL : ttl;
     ip->protocol = NET_IPPROTO_TCP;
     ip->source = source_ip;
     ip->destination = destination_ip;

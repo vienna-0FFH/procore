@@ -49,6 +49,7 @@ The current initial subset maps these LTP themes:
 | `fdsharetest` | `dup`, `close`, `fork` | shared descriptions and SMP lifetime races |
 | `vfstest` | VFS namespace | mkdir, link, rename, unlink, traversal |
 | `nettest` | socket/UDP | loopback datagrams and descriptor sharing |
+| `socketopttest` | `getsockopt`, `setsockopt` | socket type/buffer flags, IP TTL, TCP_NODELAY and TCP_MAXSEG |
 | `affinitytest` | scheduler affinity | CPU mask and per-CPU counters |
 | `schedtest` | scheduler/load balance | runnable migration and accounting |
 | `cowtest` | memory management | fork COW and reclaim |

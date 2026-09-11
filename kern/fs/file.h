@@ -61,5 +61,9 @@ int file_socket_send(int fd, const void *data, size_t length);
 int file_socket_recv(int fd, void *data, size_t length);
 int file_socket_getsockname(int fd, struct sockaddr_in *address);
 int file_socket_getpeername(int fd, struct sockaddr_in *address);
+int file_socket_getsockopt(int fd, int level, int option,
+                           void *value, size_t *length_store);
+int file_socket_setsockopt(int fd, int level, int option,
+                           const void *value, size_t length);
 
 #endif /* !__KERN_FS_FILE_H__ */

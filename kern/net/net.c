@@ -245,9 +245,17 @@ net_tcp_send_segment(struct net_socket *socket, uint8_t flags,
     uint32_t next_hop;
     int frame_length;
     int ret;
+    uint32_t max_segment;
+    uint8_t ip_ttl;
 
-    if (socket == NULL || socket->type != SOCK_STREAM ||
-        payload_length > NET_TCP_MSS) {
+    if (socket == NULL || socket->type != SOCK_STREAM) {
+        return -E_INVAL;
+    }
+    spin_lock(&socket->lock);
+    max_segment = socket->tcp_maxseg;
+    ip_ttl = (uint8_t)socket->ip_ttl;
+    spin_unlock(&socket->lock);
+    if (max_segment == 0 || payload_length > max_segment) {
         return -E_INVAL;
     }
     peer = socket->peer;
@@ -262,7 +270,7 @@ net_tcp_send_segment(struct net_socket *socket, uint8_t flags,
         frame, sizeof(frame), net_local_mac, destination_mac,
         source_ip, peer.sin_addr, socket->port, peer.sin_port,
         sequence, acknowledgement, flags, htons(65535), payload,
-        payload_length, ++net_ip_identification);
+         payload_length, ++net_ip_identification, ip_ttl);
     if (frame_length < 0) {
         return frame_length;
     }
@@ -1109,6 +1117,14 @@ net_socket_create(int domain, int type, int protocol) {
     socket->tcp_cwnd = NET_TCP_INITIAL_CWND_SEGMENTS * NET_TCP_MSS;
     socket->tcp_ssthresh =
         NET_TCP_INITIAL_SSTHRESH_SEGMENTS * NET_TCP_MSS;
+    socket->rcvbuf = NET_DEFAULT_SOCKET_BUFFER;
+    socket->sndbuf = NET_DEFAULT_SOCKET_BUFFER;
+    socket->ip_ttl = NET_IP_TTL;
+    socket->tcp_maxseg = NET_TCP_MSS;
+    socket->reuseaddr = 0;
+    socket->broadcast = 0;
+    socket->keepalive = 0;
+    socket->nodelay = 0;
     socket->tcp_last_ack = 0;
     socket->tcp_dup_acks = 0;
     socket->closed = 0;
@@ -1694,7 +1710,8 @@ net_socket_sendto(struct net_socket *socket, const void *data, size_t length,
         frame_length = net_build_udp_frame(
             frame, sizeof(frame), net_local_mac, destination_mac,
             NET_LOCAL_IP, destination->sin_addr, socket->port,
-            destination->sin_port, data, length, ++net_ip_identification);
+            destination->sin_port, data, length, ++net_ip_identification,
+            (uint8_t)socket->ip_ttl);
         if (frame_length < 0) {
             return frame_length;
         }
@@ -1788,10 +1805,15 @@ net_socket_send(struct net_socket *socket, const void *data, size_t length) {
         while (offset < length) {
             size_t chunk = length - offset;
             uint32_t sequence, acknowledgement;
+            uint32_t max_segment;
             struct net_tcp_tx_segment *segment;
-            if (chunk > NET_TCP_MSS) {
-                chunk = NET_TCP_MSS;
+            spin_lock(&socket->lock);
+            max_segment = socket->tcp_maxseg;
+            spin_unlock(&socket->lock);
+            if (max_segment == 0) {
+                return offset != 0 ? (int)offset : -E_INVAL;
             }
+            if (chunk > max_segment) chunk = max_segment;
             segment = kmalloc(sizeof(*segment) + chunk - 1);
             if (segment == NULL) {
                 return offset != 0 ? (int)offset : -E_NO_MEM;
@@ -1993,6 +2015,107 @@ net_socket_getpeername(struct net_socket *socket,
     }
     *address = socket->peer;
     spin_unlock(&net_socket_lock);
+    return 0;
+}
+
+static int
+net_socket_option_value(struct net_socket *socket, int level, int option,
+                        int *value_store) {
+    if (socket == NULL || value_store == NULL) return -E_INVAL;
+    if (level == SOL_SOCKET) {
+        switch (option) {
+        case SO_TYPE: *value_store = socket->type; return 0;
+        case SO_ERROR: *value_store = 0; return 0;
+        case SO_REUSEADDR: *value_store = socket->reuseaddr; return 0;
+        case SO_BROADCAST: *value_store = socket->broadcast; return 0;
+        case SO_KEEPALIVE: *value_store = socket->keepalive; return 0;
+        case SO_RCVBUF: *value_store = (int)socket->rcvbuf; return 0;
+        case SO_SNDBUF: *value_store = (int)socket->sndbuf; return 0;
+        default: return -E_UNIMP;
+        }
+    }
+    if (level == IPPROTO_IP && option == IP_TTL) {
+        *value_store = (int)socket->ip_ttl;
+        return 0;
+    }
+    if (level == IPPROTO_TCP) {
+        if (option == TCP_NODELAY) {
+            *value_store = socket->nodelay;
+            return 0;
+        }
+        if (option == TCP_MAXSEG) {
+            *value_store = (int)socket->tcp_maxseg;
+            return 0;
+        }
+    }
+    return -E_UNIMP;
+}
+
+int
+net_socket_getsockopt(struct net_socket *socket, int level, int option,
+                       void *value, size_t *length_store) {
+    int option_value;
+    size_t length;
+    int ret;
+    if (socket == NULL || value == NULL || length_store == NULL) return -E_INVAL;
+    length = *length_store;
+    if (length < sizeof(int)) return -E_INVAL;
+    spin_lock(&socket->lock);
+    ret = net_socket_option_value(socket, level, option, &option_value);
+    spin_unlock(&socket->lock);
+    if (ret != 0) return ret;
+    memcpy(value, &option_value, sizeof(option_value));
+    *length_store = sizeof(option_value);
+    return 0;
+}
+
+int
+net_socket_setsockopt(struct net_socket *socket, int level, int option,
+                      const void *value, size_t length) {
+    int option_value;
+    if (socket == NULL || value == NULL || length < sizeof(int)) return -E_INVAL;
+    memcpy(&option_value, value, sizeof(option_value));
+    spin_lock(&socket->lock);
+    if (level == SOL_SOCKET) {
+        switch (option) {
+        case SO_REUSEADDR: socket->reuseaddr = option_value != 0; break;
+        case SO_BROADCAST: socket->broadcast = option_value != 0; break;
+        case SO_KEEPALIVE: socket->keepalive = option_value != 0; break;
+        case SO_RCVBUF:
+            if (option_value <= 0 || (uint32_t)option_value > NET_TCP_MAX_WRITE) {
+                spin_unlock(&socket->lock); return -E_INVAL;
+            }
+            socket->rcvbuf = (uint32_t)option_value;
+            break;
+        case SO_SNDBUF:
+            if (option_value <= 0 || (uint32_t)option_value > NET_TCP_MAX_WRITE) {
+                spin_unlock(&socket->lock); return -E_INVAL;
+            }
+            socket->sndbuf = (uint32_t)option_value;
+            break;
+        default: spin_unlock(&socket->lock); return -E_UNIMP;
+        }
+    }
+    else if (level == IPPROTO_IP && option == IP_TTL) {
+        if (option_value < 1 || option_value > 255) {
+            spin_unlock(&socket->lock); return -E_INVAL;
+        }
+        socket->ip_ttl = (uint32_t)option_value;
+    }
+    else if (level == IPPROTO_TCP && option == TCP_NODELAY) {
+        socket->nodelay = option_value != 0;
+    }
+    else if (level == IPPROTO_TCP && option == TCP_MAXSEG) {
+        if (option_value < 64 || option_value > NET_TCP_MSS) {
+            spin_unlock(&socket->lock); return -E_INVAL;
+        }
+        socket->tcp_maxseg = (uint32_t)option_value;
+    }
+    else {
+        spin_unlock(&socket->lock);
+        return -E_UNIMP;
+    }
+    spin_unlock(&socket->lock);
     return 0;
 }
 
