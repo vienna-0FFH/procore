@@ -73,6 +73,11 @@ sys_wait4(int pid, int *store, uint32_t options) {
 }
 
 int
+sys_waitid(int idtype, int id, siginfo_t *info, uint32_t options) {
+    return syscall4(SYS_waitid, idtype, id, (uintptr_t)info, options);
+}
+
+int
 sys_yield(void) {
     return syscall0(SYS_yield);
 }

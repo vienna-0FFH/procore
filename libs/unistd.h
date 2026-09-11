@@ -81,6 +81,7 @@
 #define SYS_getsockopt      181
 #define SYS_setsockopt      182
 #define SYS_select          183
+#define SYS_waitid          184
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -111,6 +112,30 @@
 #define CLONE_FS            0x00000800  // set if shared between processes
 
 #define WNOHANG             0x00000001
+#define WUNTRACED           0x00000002
+#define WEXITED             0x00000004
+#define WCONTINUED          0x00000008
+#define WNOWAIT             0x01000000
+#define P_ALL               0
+#define P_PID               1
+#define P_PGID              2
+#define CLD_EXITED          1
+#define CLD_KILLED          2
+#define CLD_STOPPED         5
+#define CLD_CONTINUED       6
+
+#ifndef __UCORE_SIGINFO_DEFINED
+#define __UCORE_SIGINFO_DEFINED
+struct siginfo {
+    int32_t si_signo;
+    int32_t si_errno;
+    int32_t si_code;
+    int32_t si_pid;
+    int32_t si_uid;
+    int32_t si_status;
+};
+typedef struct siginfo siginfo_t;
+#endif
 
 /* Anonymous mappings; file-backed mappings require a page-cache contract. */
 #define PROT_NONE           0x0

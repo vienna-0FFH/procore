@@ -9,6 +9,7 @@ int sys_clone(uint32_t clone_flags, void *child_stack,
               uintptr_t entry, uintptr_t fn, uintptr_t arg);
 int sys_wait(int pid, int *store);
 int sys_wait4(int pid, int *store, uint32_t options);
+int sys_waitid(int idtype, int id, siginfo_t *info, uint32_t options);
 int sys_exec(const char *name, int argc, const char **argv);
 int sys_yield(void);
 int sys_kill(int pid, int signo);

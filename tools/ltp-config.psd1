@@ -31,6 +31,7 @@
         'timetest',
         'sysinfotest',
         'waitvfstest',
+        'waitidtest',
         'chdirtest',
         'clonetest',
         'mmaptest',

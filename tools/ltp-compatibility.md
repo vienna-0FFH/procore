@@ -43,6 +43,7 @@ The current initial subset maps these LTP themes:
 | `timetest` | `clock_gettime`, `clock_getres`, `gettimeofday`, `nanosleep`, `time` | monotonic/realtime clocks, tick resolution, sleep validation, and process CPU time |
 | `sysinfotest` | `uname`, `sysinfo`, `getuid`, `geteuid`, `getgid`, `getegid`, `getresuid`, `getresgid` | OS identity, memory/swap totals, process count, and the configured single-identity model |
 | `waitvfstest` | `wait4`, `WNOHANG`, `fchdir`, `rmdir` | non-blocking child polling, descriptor-based cwd, and empty-directory removal |
+| `waitidtest` | `waitid`, `P_PID`, `P_ALL`, `WEXITED`, `WNOWAIT` | child status records, non-blocking polling, and optional non-reaping observation |
 | `chdirtest` | `chdir`, `dup`, `lseek` | VFS cwd and shared open-file offset |
 | `clonetest` | `clone`, `gettid`, `getppid`, `getcpu` | shared address space/thread entry |
 | `mmaptest` | `mmap`, `munmap`, `brk` | anonymous mappings and heap boundary |

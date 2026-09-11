@@ -34,6 +34,7 @@ int clone(int (*fn)(void *), void *child_stack,
 int wait(void);
 int waitpid(int pid, int *store);
 int wait4(int pid, int *store, uint32_t options);
+int waitid(int idtype, int id, siginfo_t *info, uint32_t options);
 void yield(void);
 int getpid(void);
 int getppid(void);

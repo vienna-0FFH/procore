@@ -1448,3 +1448,89 @@ do_sleep(unsigned int time) {
     }
     return 0;
 }
+
+int
+do_waitid(int idtype, int id, struct siginfo *info, uint32_t options) {
+    struct proc_struct *proc;
+    bool intr_flag;
+    bool haskid;
+    bool reap;
+
+    if (info == NULL || (options & WEXITED) == 0 ||
+        (options & ~(WEXITED | WNOHANG | WNOWAIT)) != 0) {
+        return -E_INVAL;
+    }
+    if (idtype == P_PGID) return -E_UNIMP;
+    if (idtype != P_ALL && idtype != P_PID) return -E_INVAL;
+    if (idtype == P_PID && id <= 0) return -E_INVAL;
+    memset(info, 0, sizeof(*info));
+    reap = (options & WNOWAIT) == 0;
+
+repeat:
+    if (signal_should_interrupt(current)) return -E_INTR;
+    proc = NULL;
+    haskid = 0;
+    local_intr_save(intr_flag);
+    spin_lock(&proc_lock);
+    if (idtype == P_PID) {
+        if (id > 0 && id < MAX_PID) {
+            list_entry_t *list = hash_list + pid_hashfn(id), *le = list;
+            while ((le = list_next(le)) != list) {
+                struct proc_struct *candidate = le2proc(le, hash_link);
+                if (candidate->pid == id) {
+                    proc = candidate;
+                    break;
+                }
+            }
+        }
+        if (proc != NULL && proc->parent == current) {
+            haskid = 1;
+            if (proc->state != PROC_ZOMBIE || proc->on_cpu) proc = NULL;
+        } else {
+            proc = NULL;
+        }
+    } else {
+        struct proc_struct *candidate;
+        for (candidate = current->cptr; candidate != NULL;
+             candidate = candidate->optr) {
+            haskid = 1;
+            if (candidate->state == PROC_ZOMBIE && !candidate->on_cpu) {
+                proc = candidate;
+                break;
+            }
+        }
+    }
+    if (proc != NULL) {
+        info->si_signo = SIGCHLD;
+        info->si_errno = 0;
+        info->si_code = CLD_EXITED;
+        info->si_pid = proc->pid;
+        info->si_uid = 0;
+        info->si_status = proc->exit_code;
+        if (reap) {
+            unhash_proc(proc);
+            remove_links(proc);
+        }
+        spin_unlock(&proc_lock);
+        local_intr_restore(intr_flag);
+        if (reap) {
+            put_kstack(proc);
+            kfree(proc);
+        }
+        return 0;
+    }
+    if (haskid && (options & WNOHANG) == 0) {
+        current->state = PROC_SLEEPING;
+        current->wait_state = WT_CHILD;
+    }
+    spin_unlock(&proc_lock);
+    local_intr_restore(intr_flag);
+    if (haskid && (options & WNOHANG) == 0) {
+        schedule();
+        if (current->flags & PF_EXITING) do_exit(-E_KILLED);
+        if (signal_should_interrupt(current)) return -E_INTR;
+        goto repeat;
+    }
+    memset(info, 0, sizeof(*info));
+    return haskid ? 0 : -E_BAD_PROC;
+}

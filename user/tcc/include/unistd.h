@@ -54,6 +54,19 @@ struct sysinfo {
 };
 #endif
 
+#ifndef __UCORE_SIGINFO_DEFINED
+#define __UCORE_SIGINFO_DEFINED
+struct siginfo {
+    int32_t si_signo;
+    int32_t si_errno;
+    int32_t si_code;
+    int32_t si_pid;
+    int32_t si_uid;
+    int32_t si_status;
+};
+typedef struct siginfo siginfo_t;
+#endif
+
 int open(const char *, int, ...);
 int close(int);
 ssize_t read(int, void *, size_t);
@@ -65,6 +78,7 @@ int chdir(const char *);
 char *getcwd(char *, size_t);
 int execvp(const char *, char *const []);
 int wait4(int, int *, unsigned int);
+int waitid(int, int, siginfo_t *, unsigned int);
 int fchdir(int);
 int rmdir(const char *);
 int select(int, fd_set *, fd_set *, fd_set *, struct timeval *);

@@ -117,6 +117,7 @@ int do_yield(void);
 int do_execve(const char *name, int argc, const char **argv);
 int do_wait(int pid, int *code_store);
 int do_wait_options(int pid, int *code_store, uint32_t options);
+int do_waitid(int idtype, int id, struct siginfo *info, uint32_t options);
 int do_kill(int pid);
 int do_kill_signal(int pid, int signo);
 int do_setaffinity(int pid, uint32_t mask);

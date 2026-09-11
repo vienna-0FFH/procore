@@ -108,6 +108,26 @@ sys_wait4(uint32_t arg[]) {
 }
 
 static int
+sys_waitid(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct siginfo info;
+    int ret;
+    if (mm == NULL || arg[2] == 0 ||
+        !user_mem_check(mm, (uintptr_t)arg[2], sizeof(info), 1)) {
+        return -E_INVAL;
+    }
+    ret = do_waitid((int)arg[0], (int)arg[1], &info, arg[3]);
+    if (ret != 0) return ret;
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[2], &info, sizeof(info))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
+}
+
+static int
 sys_exec(uint32_t arg[]) {
     const char *name = (const char *)arg[0];
     int argc = (int)arg[1];
@@ -1350,6 +1370,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_clone]             sys_clone,
     [SYS_wait]              sys_wait,
     [SYS_wait4]             sys_wait4,
+    [SYS_waitid]            sys_waitid,
     [SYS_exec]              sys_exec,
     [SYS_yield]             sys_yield,
     [SYS_kill]              sys_kill,
