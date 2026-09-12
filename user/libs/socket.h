@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 int socket(int domain, int type, int protocol);
+int socketpair(int domain, int type, int protocol, int fd[2]);
 int bind(int fd, const struct sockaddr_in *address, size_t length);
 int connect(int fd, const struct sockaddr_in *address, size_t length);
 int listen(int fd, int backlog);

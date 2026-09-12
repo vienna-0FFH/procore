@@ -83,6 +83,7 @@
 #define SYS_select          183
 #define SYS_waitid          184
 #define SYS_mprotect        185
+#define SYS_socketpair      186
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -315,6 +316,8 @@ struct timezone {
 #define EXEC_MAX_ARG_LEN    4095
 
 /* Minimal IPv4 datagram ABI.  Ports use network byte order. */
+#define AF_UNIX             1
+#define AF_LOCAL            AF_UNIX
 #define AF_INET             2
 #define SOCK_DGRAM          2
 #define SOCK_STREAM         1

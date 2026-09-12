@@ -48,6 +48,7 @@ int file_poll(int fd, int16_t events, int16_t *revents_store);
 int file_pipe(int fd[]);
 int file_mkfifo(const char *name, uint32_t open_flags);
 int file_socket_create(int domain, int type, int protocol);
+int file_socketpair_create(int domain, int type, int protocol, int fd[2]);
 int file_socket_bind(int fd, const struct sockaddr_in *address, size_t length);
 int file_socket_connect(int fd, const struct sockaddr_in *address, size_t length);
 int file_socket_listen(int fd, int backlog);

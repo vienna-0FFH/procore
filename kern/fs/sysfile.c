@@ -611,6 +611,31 @@ sysfile_pipe2(int *fd_store, uint32_t flags) {
 }
 
 int
+sysfile_socketpair(int domain, int type, int protocol, int *fd_store) {
+    struct mm_struct *mm = current->mm;
+    int fds[2];
+    int ret;
+
+    if (mm == NULL || fd_store == NULL) {
+        return -E_INVAL;
+    }
+    ret = file_socketpair_create(domain, type, protocol, fds);
+    if (ret != 0) {
+        return ret;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, fd_store, fds, sizeof(fds))) {
+        ret = -E_INVAL;
+    }
+    unlock_mm(mm);
+    if (ret != 0) {
+        file_close(fds[0]);
+        file_close(fds[1]);
+    }
+    return ret;
+}
+
+int
 sysfile_mkfifo(const char *__name, uint32_t open_flags) {
     return -E_UNIMP;
 }

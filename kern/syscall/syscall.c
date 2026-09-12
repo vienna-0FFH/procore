@@ -890,6 +890,12 @@ sys_pipe2(uint32_t arg[]) {
 }
 
 static int
+sys_socketpair(uint32_t arg[]) {
+    return sysfile_socketpair((int)arg[0], (int)arg[1], (int)arg[2],
+                              (int *)arg[3]);
+}
+
+static int
 sys_socket(uint32_t arg[]) {
     return file_socket_create((int)arg[0], (int)arg[1], (int)arg[2]);
 }
@@ -1453,6 +1459,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_dup]               sys_dup,
     [SYS_pipe]              sys_pipe,
     [SYS_pipe2]             sys_pipe2,
+    [SYS_socketpair]        sys_socketpair,
     [SYS_socket]            sys_socket,
     [SYS_bind]              sys_bind,
     [SYS_sendto]            sys_sendto,

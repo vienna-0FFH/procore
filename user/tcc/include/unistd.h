@@ -77,6 +77,7 @@ int access(const char *, int);
 int chdir(const char *);
 char *getcwd(char *, size_t);
 int execvp(const char *, char *const []);
+int socketpair(int, int, int, int [2]);
 int wait4(int, int *, unsigned int);
 int waitid(int, int, siginfo_t *, unsigned int);
 int mprotect(void *, size_t, unsigned int);

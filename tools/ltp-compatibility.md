@@ -235,7 +235,8 @@ The vector-I/O count is bounded by the editable `FS_IOV_MAX` policy in
 `FS_DEFS+=-DFS_IOV_MAX=...`.
 | `dup`, `dup2`, `lseek` | invalid descriptors, replacement, self-dup, shared offset | `PASS` for the implemented descriptor-description model | `chdirtest`, `fdsharetest` |
 | `fork`, `clone`, `wait`, `waitpid` | child lifecycle, clone entry, parent wait and status | `PASS` for uCore's supported flags and status ABI | `clonetest`, `fdsharetest` |
-| `socket`, UDP send/receive | invalid domain/type cases plus datagram loopback | `PASS` for AF_INET/SOCK_DGRAM; TCP/UNIX/raw cases `NOT_IMPL` | `nettest` |
+| `socket`, UDP send/receive | invalid domain/type cases plus datagram loopback | `PASS` for AF_INET/SOCK_DGRAM; TCP/raw and connected UNIX sockets remain `NOT_IMPL` | `nettest` |
+| `socketpair` | unnamed AF_UNIX stream pair, full-duplex byte flow, nonblocking read, and peer close readiness | `PASS` for the in-kernel pipe-backed SOCK_STREAM subset | `socketpairtest` |
 | `raise`, `kill`, `sigaction`, `sigprocmask`, `sigreturn` | pending delivery, handler return, masks, default actions, stop/continue, `SIGCHLD`, `SIGPIPE` | `PASS` for the first-phase process-directed ABI; realtime queues, timers, and signalfd are not implemented | signal tests |
 
 The following upstream families deliberately remain outside the current uCore

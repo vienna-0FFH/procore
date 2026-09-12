@@ -42,6 +42,7 @@
         'selecttest',
         'vfstest',
         'nettest',
+        'socketpairtest',
         'socketopttest',
         'netconnecttest',
         'tcplistentest',

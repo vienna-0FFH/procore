@@ -170,6 +170,11 @@ sys_socket(int domain, int type, int protocol) {
 }
 
 int
+sys_socketpair(int domain, int type, int protocol, int fd[2]) {
+    return syscall4(SYS_socketpair, domain, type, protocol, (uintptr_t)fd);
+}
+
+int
 sys_bind(int fd, const struct sockaddr_in *address, size_t length) {
     return syscall3(SYS_bind, fd, (uintptr_t)address, length);
 }

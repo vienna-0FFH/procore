@@ -22,6 +22,7 @@ enum open_file_kind {
     OPEN_FILE_INODE,
     OPEN_FILE_SOCKET,
     OPEN_FILE_PIPE,
+    OPEN_FILE_SOCKETPAIR,
 };
 
 /* A pipe is a byte stream shared by one read description and one write
@@ -39,6 +40,15 @@ struct pipe {
     int readers;
     int writers;
     volatile int ref_count;
+};
+
+/* An unnamed stream socket endpoint is represented by two ordinary byte
+ * streams.  Endpoint A writes to pipe_ab and reads from pipe_ba; endpoint B
+ * uses the opposite direction.  Keeping the endpoint separate from the
+ * open-file description lets dup()/fork() share the same full-duplex object. */
+struct socketpair_endpoint {
+    struct pipe *read_pipe;
+    struct pipe *write_pipe;
 };
 
 /*
@@ -59,6 +69,7 @@ struct open_file {
         struct inode *node;
         struct net_socket *socket;
         struct pipe *pipe;
+        struct socketpair_endpoint *socketpair;
     } object;
     semaphore_t operation_sem;
 };
@@ -134,6 +145,35 @@ pipe_endpoint_open(struct pipe *pipe, bool readable, bool writable) {
     spin_unlock(&pipe->lock);
 }
 
+static void pipe_put(struct pipe *pipe);
+
+static void
+socketpair_endpoint_open(struct socketpair_endpoint *endpoint) {
+    if (endpoint == NULL) {
+        return;
+    }
+    pipe_endpoint_open(endpoint->read_pipe, 1, 0);
+    pipe_endpoint_open(endpoint->write_pipe, 0, 1);
+}
+
+static void
+socketpair_endpoint_close(struct socketpair_endpoint *endpoint) {
+    if (endpoint == NULL) {
+        return;
+    }
+    pipe_endpoint_close(endpoint->read_pipe, 1, 0);
+    pipe_endpoint_close(endpoint->write_pipe, 0, 1);
+}
+
+static void
+socketpair_endpoint_put(struct socketpair_endpoint *endpoint) {
+    if (endpoint != NULL) {
+        pipe_put(endpoint->read_pipe);
+        pipe_put(endpoint->write_pipe);
+        kfree(endpoint);
+    }
+}
+
 static void
 pipe_put(struct pipe *pipe) {
     if (pipe != NULL && atomic_dec_return(&pipe->ref_count) == 0) {
@@ -184,6 +224,9 @@ open_file_get_descriptor(struct open_file *description) {
         pipe_endpoint_open(description->object.pipe,
                            description->readable, description->writable);
     }
+    else if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        socketpair_endpoint_open(description->object.socketpair);
+    }
 }
 
 static void
@@ -204,6 +247,9 @@ open_file_drop_descriptor(struct open_file *description) {
         pipe_endpoint_close(description->object.pipe,
                              description->readable, description->writable);
     }
+    else if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        socketpair_endpoint_close(description->object.socketpair);
+    }
 }
 
 void
@@ -223,6 +269,9 @@ open_file_put(struct open_file *description) {
     }
     else if (description->kind == OPEN_FILE_PIPE) {
         pipe_put(description->object.pipe);
+    }
+    else if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        socketpair_endpoint_put(description->object.socketpair);
     }
     else {
         vfs_close(description->object.node);
@@ -678,6 +727,18 @@ file_read(int fd, void *base, size_t len, size_t *copied_store) {
         open_file_put(description);
         return ret;
     }
+    if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        down(&description->operation_sem);
+        ret = pipe_read(description->object.socketpair->read_pipe, base, len,
+                        (description->status_flags & O_NONBLOCK) != 0);
+        up(&description->operation_sem);
+        if (ret > 0) {
+            *copied_store = (size_t)ret;
+            ret = 0;
+        }
+        open_file_put(description);
+        return ret;
+    }
     if (description->kind != OPEN_FILE_INODE || !description->readable) {
         open_file_put(description);
         return -E_INVAL;
@@ -711,6 +772,18 @@ file_write(int fd, void *base, size_t len, size_t *copied_store) {
         }
         down(&description->operation_sem);
         ret = pipe_write(description->object.pipe, base, len,
+                         (description->status_flags & O_NONBLOCK) != 0);
+        up(&description->operation_sem);
+        if (ret > 0) {
+            *copied_store = (size_t)ret;
+            ret = 0;
+        }
+        open_file_put(description);
+        return ret;
+    }
+    if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        down(&description->operation_sem);
+        ret = pipe_write(description->object.socketpair->write_pipe, base, len,
                          (description->status_flags & O_NONBLOCK) != 0);
         up(&description->operation_sem);
         if (ret > 0) {
@@ -1082,6 +1155,31 @@ file_poll(int fd, int16_t events, int16_t *revents_store) {
     else if (description->kind == OPEN_FILE_SOCKET) {
         ret = net_socket_poll(description->object.socket, events, &revents);
     }
+    else if (description->kind == OPEN_FILE_SOCKETPAIR) {
+        struct socketpair_endpoint *endpoint = description->object.socketpair;
+        int16_t read_events = 0, write_events = 0;
+        struct pipe *read_pipe = endpoint->read_pipe;
+        struct pipe *write_pipe = endpoint->write_pipe;
+        spin_lock(&read_pipe->lock);
+        if ((events & POLLIN) != 0 &&
+            (read_pipe->count != 0 || read_pipe->writers == 0)) {
+            read_events |= read_pipe->count != 0 ? POLLIN : POLLHUP;
+        }
+        if (read_pipe->readers == 0) {
+            read_events |= POLLERR;
+        }
+        spin_unlock(&read_pipe->lock);
+        spin_lock(&write_pipe->lock);
+        if ((events & POLLOUT) != 0 &&
+            (write_pipe->count < FS_PIPE_CAPACITY && write_pipe->readers != 0)) {
+            write_events |= POLLOUT;
+        }
+        if (write_pipe->readers == 0) {
+            write_events |= POLLERR;
+        }
+        spin_unlock(&write_pipe->lock);
+        revents = read_events | write_events;
+    }
     else {
         revents = events & (POLLIN | POLLOUT);
     }
@@ -1134,6 +1232,101 @@ file_socket_create(int domain, int type, int protocol) {
 failed_socket_slot:
     lock_files(filesp);
     fd_array_cancel(file);
+    unlock_files(filesp);
+    return ret;
+}
+
+int
+file_socketpair_create(int domain, int type, int protocol, int fd[2]) {
+    struct files_struct *filesp = current_files();
+    struct file *file_a = NULL, *file_b = NULL;
+    struct open_file *desc_a = NULL, *desc_b = NULL;
+    struct socketpair_endpoint *a = NULL, *b = NULL;
+    struct pipe *ab = NULL, *ba = NULL;
+    bool endpoint_refs = 0;
+    int ret;
+
+    if (fd == NULL || domain != AF_UNIX || type != SOCK_STREAM ||
+        protocol != 0) {
+        return -E_INVAL;
+    }
+    lock_files(filesp);
+    ret = fd_array_alloc(filesp, NO_FD, &file_a);
+    if (ret == 0) ret = fd_array_alloc(filesp, NO_FD, &file_b);
+    unlock_files(filesp);
+    if (ret != 0) goto failed_slots;
+
+    ab = pipe_create();
+    ba = pipe_create();
+    a = kmalloc(sizeof(*a));
+    b = kmalloc(sizeof(*b));
+    if (ab == NULL || ba == NULL || a == NULL || b == NULL) {
+        ret = -E_NO_MEM;
+        goto failed_alloc;
+    }
+    a->read_pipe = ba;
+    a->write_pipe = ab;
+    b->read_pipe = ab;
+    b->write_pipe = ba;
+    /* One reference for each endpoint, plus the creator reference held by
+     * this function until installation completes. */
+    pipe_get(ab);
+    pipe_get(ba);
+    endpoint_refs = 1;
+    desc_a = open_file_create(OPEN_FILE_SOCKETPAIR, 1, 1, 0, 0, a);
+    desc_b = open_file_create(OPEN_FILE_SOCKETPAIR, 1, 1, 0, 0, b);
+    if (desc_a == NULL || desc_b == NULL) {
+        ret = -E_NO_MEM;
+        goto failed_alloc;
+    }
+    socketpair_endpoint_open(a);
+    socketpair_endpoint_open(b);
+    pipe_put(ab);
+    pipe_put(ba);
+    ab = ba = NULL;
+    lock_files(filesp);
+    fd_array_install(file_a, desc_a);
+    fd_array_install(file_b, desc_b);
+    unlock_files(filesp);
+    fd[0] = file_a->fd;
+    fd[1] = file_b->fd;
+    return 0;
+
+failed_alloc:
+    if (desc_a != NULL) {
+        open_file_drop_descriptor(desc_a);
+        open_file_put(desc_a);
+        a = NULL;
+    }
+    else if (a != NULL) {
+        if (endpoint_refs) {
+            socketpair_endpoint_put(a);
+        }
+        else {
+            kfree(a);
+        }
+        a = NULL;
+    }
+    if (desc_b != NULL) {
+        open_file_drop_descriptor(desc_b);
+        open_file_put(desc_b);
+        b = NULL;
+    }
+    else if (b != NULL) {
+        if (endpoint_refs) {
+            socketpair_endpoint_put(b);
+        }
+        else {
+            kfree(b);
+        }
+        b = NULL;
+    }
+    if (ab != NULL) pipe_put(ab);
+    if (ba != NULL) pipe_put(ba);
+failed_slots:
+    lock_files(filesp);
+    if (file_a != NULL && file_a->status == FD_INIT) fd_array_cancel(file_a);
+    if (file_b != NULL && file_b->status == FD_INIT) fd_array_cancel(file_b);
     unlock_files(filesp);
     return ret;
 }

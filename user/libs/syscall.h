@@ -34,6 +34,7 @@ int sys_setaffinity(int pid, uint32_t mask);
 int sys_getaffinity(int pid, uint32_t *mask_store);
 int sys_getcpustat(int cpu, struct cpu_stat *stat);
 int sys_socket(int domain, int type, int protocol);
+int sys_socketpair(int domain, int type, int protocol, int fd[2]);
 int sys_bind(int fd, const struct sockaddr_in *address, size_t length);
 int sys_sendto(int fd, const void *data, size_t length,
                const struct sockaddr_in *destination, size_t dest_length);
