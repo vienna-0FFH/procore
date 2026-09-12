@@ -28,7 +28,8 @@
 #define E_NOTEMPTY          24  // Directory is Not Empty
 #define E_PIPE              25  // Broken pipe
 #define E_INTR              26  // Interrupted by a signal
+#define E_AGAIN             27  // Resource temporarily unavailable
 /* the maximum allowed */
-#define MAXERROR            26
+#define MAXERROR            27
 
 #endif /* !__LIBS_ERROR_H__ */

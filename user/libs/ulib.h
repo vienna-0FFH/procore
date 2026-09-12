@@ -56,6 +56,8 @@ int munmap(void *addr, size_t len);
 int mprotect(void *addr, size_t len, uint32_t prot);
 int getrusage(int who, struct rusage *usage);
 int madvise(void *addr, size_t len, int advice);
+int futex(uint32_t *address, int operation, uint32_t expected,
+          const struct timespec *timeout);
 uintptr_t brk(uintptr_t newbrk);
 void print_pgdir(void);
 int sleep(unsigned int time);

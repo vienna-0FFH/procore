@@ -21,6 +21,11 @@ typedef struct { uint32_t bits[UCORE_FD_SET_WORDS]; } fd_set;
 struct timeval { int tv_sec; int tv_usec; };
 #endif
 
+#ifndef __UCORE_TIMESPEC_DEFINED
+#define __UCORE_TIMESPEC_DEFINED
+struct timespec { int tv_sec; int tv_nsec; };
+#endif
+
 #ifndef __UCORE_UTSNAME_DEFINED
 #define __UCORE_UTSNAME_DEFINED
 #define UCORE_UTS_FIELD_LEN 65
@@ -85,6 +90,7 @@ int waitid(int, int, siginfo_t *, unsigned int);
 int mprotect(void *, size_t, unsigned int);
 int getrusage(int, struct rusage *);
 int madvise(void *, size_t, int);
+int futex(uint32_t *, int, uint32_t, const struct timespec *);
 int fchdir(int);
 int rmdir(const char *);
 int select(int, fd_set *, fd_set *, fd_set *, struct timeval *);

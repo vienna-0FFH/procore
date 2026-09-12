@@ -299,6 +299,13 @@ sys_madvise(void *addr, size_t len, int advice) {
 }
 
 int
+sys_futex(uint32_t *address, int operation, uint32_t expected,
+          const struct timespec *timeout) {
+    return syscall4(SYS_futex, (uintptr_t)address, operation, expected,
+                    (uintptr_t)timeout);
+}
+
+int
 sys_brk(uintptr_t newbrk) {
     return syscall1(SYS_brk, newbrk);
 }

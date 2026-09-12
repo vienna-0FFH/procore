@@ -18,6 +18,7 @@
 #include <net.h>
 #include <pci.h>
 #include <e1000.h>
+#include <futex.h>
 
 int kern_init(void) __attribute__((noreturn));
 
@@ -58,6 +59,7 @@ kern_init(void) {
     vmm_init();                 // init virtual memory management
     sched_init();               // init scheduler
     proc_init();                // init process table
+    futex_init();               // initialize hashed user wait queues
     
     ide_init();                 // init ide devices
     swap_init();                // init swap

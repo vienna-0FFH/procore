@@ -40,6 +40,7 @@ static const char * const error_string[MAXERROR + 1] = {
     [E_NOTEMPTY]            "directory is not empty",
     [E_PIPE]                "broken pipe",
     [E_INTR]                "interrupted system call",
+    [E_AGAIN]               "try again",
 };
 
 /* *

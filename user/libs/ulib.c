@@ -147,6 +147,12 @@ madvise(void *addr, size_t len, int advice) {
     return sys_madvise(addr, len, advice);
 }
 
+int
+futex(uint32_t *address, int operation, uint32_t expected,
+      const struct timespec *timeout) {
+    return sys_futex(address, operation, expected, timeout);
+}
+
 uintptr_t
 brk(uintptr_t newbrk) {
     return (uintptr_t)sys_brk(newbrk);

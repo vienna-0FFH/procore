@@ -37,6 +37,7 @@
         'mmaptest',
         'mprotecttest',
         'madvisetest',
+        'futextest',
         'fdsharetest',
         'pipetest',
         'polltest',

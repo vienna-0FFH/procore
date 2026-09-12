@@ -88,6 +88,7 @@
 #define SYS_symlink         188
 #define SYS_readlink        189
 #define SYS_madvise         190
+#define SYS_futex           191
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -160,6 +161,13 @@ typedef struct siginfo siginfo_t;
 #define MADV_SEQUENTIAL     2
 #define MADV_WILLNEED       3
 #define MADV_DONTNEED       4
+
+#define FUTEX_WAIT           0
+#define FUTEX_WAKE           1
+#define FUTEX_PRIVATE_FLAG  128
+#define FUTEX_CMD_MASK      127
+#define FUTEX_WAIT_PRIVATE  (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAKE_PRIVATE  (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
 /* User-visible page granularity; the kernel's MMU header remains canonical. */
 #define UCORE_PAGE_SIZE     4096
 

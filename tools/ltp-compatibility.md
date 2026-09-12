@@ -49,6 +49,7 @@ The current initial subset maps these LTP themes:
 | `mmaptest` | `mmap`, `munmap`, `brk` | anonymous mappings and heap boundary |
 | `mprotecttest` | `mprotect` | page-aligned VMA permission changes, resident PTE updates, and PROT_NONE restoration |
 | `madvisetest` | `madvise` | anonymous mapping advice validation and `MADV_DONTNEED` page reclamation |
+| `futextest` | `futex` | private wait/wake queues, compare-before-sleep, timeout, and signal-safe SMP wakeups |
 | `fdsharetest` | `dup`, `close`, `fork` | shared descriptions and SMP lifetime races |
 | `vfstest` | VFS namespace | mkdir, link, rename, unlink, traversal |
 | `nettest` | socket/UDP | loopback datagrams and descriptor sharing |
@@ -74,7 +75,7 @@ stress rather than a confirmed deterministic failure.
 
 | uCore runner result | Tests |
 | --- | --- |
-| `PASS` | `hello`, signal tests, `chdirtest`, `clonetest`, `mmaptest`, `fdsharetest`, `pipetest`, `polltest`, `vfstest`, local network tests, `affinitytest`, `schedtest`, `cowtest`, `c4`, `tcc_run`, `ltp_legacy`, `elfgen` |
+| `PASS` | `hello`, signal tests, `chdirtest`, `clonetest`, `mmaptest`, `mprotecttest`, `madvisetest`, `futextest`, `fdsharetest`, `pipetest`, `polltest`, `vfstest`, local network tests, `affinitytest`, `schedtest`, `cowtest`, `c4`, `tcc_run`, `ltp_legacy`, `elfgen` |
 
 The machine-readable record is `target/native/ltp/summary.csv`; serial logs are
 kept beside it. These are uCore/QEMU results, not upstream Linux LTP results.
@@ -101,7 +102,7 @@ switches, for example:
 
 Upstream cases that depend on Linux-only facilities such as `/proc`, advanced
 signal queues and job-control details,
-ptrace, namespaces, cgroups, futexes, or a dynamic ELF loader remain
+ptrace, namespaces, cgroups, or a dynamic ELF loader remain
 `NOT_IMPL` until uCore grows the corresponding subsystem. They should not be
 reported as upstream-LTP passes merely because a similarly named uCore test
 exists.
@@ -241,10 +242,11 @@ The vector-I/O count is bounded by the editable `FS_IOV_MAX` policy in
 | `getrusage` | self/thread CPU time, cumulative child CPU time, context-switch counters, and argument validation | `PASS` for supported CPU/context counters; page-fault and I/O counters are currently zero | `rusagetest` |
 | `symlink/readlink` | create an SFS link inode, read its target bytes, and distinguish `lstat` from regular files | `PASS` for no-follow link operations; path-following `stat/open/chdir` semantics remain a separate phase | `symlinktest` |
 | `raise`, `kill`, `sigaction`, `sigprocmask`, `sigreturn` | pending delivery, handler return, masks, default actions, stop/continue, `SIGCHLD`, `SIGPIPE` | `PASS` for the first-phase process-directed ABI; realtime queues, timers, and signalfd are not implemented | signal tests |
+| `futex` | compare-before-sleep, private wait/wake, timeout | `PASS` for the hash-bucket private subset; requeue, PI, robust lists, and shared process keys are not implemented | `futextest` |
 
 The following upstream families deliberately remain outside the current uCore
 claim: `openat*`, `dup3`, `close_range`, `readv/writev`, advanced Linux signal
 queue/timer APIs, `execveat`,
 `/proc` and `/sys` inspection, user/group privilege transitions, namespaces,
-futexes, epoll, io_uring, filesystem mounts, and file-backed mmap. They need
+epoll, io_uring, filesystem mounts, and file-backed mmap. They need
 new ABI and kernel subsystems before a faithful port can be made.

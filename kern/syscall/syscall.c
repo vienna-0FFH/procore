@@ -19,6 +19,7 @@
 #include <fs_config.h>
 #include <sysinfo_config.h>
 #include <swap.h>
+#include <futex.h>
 
 static void sys_clock_ticks_to_timespec(uint64_t value,
                                         struct timespec *store);
@@ -480,6 +481,26 @@ sys_madvise(uint32_t arg[]) {
     ret = mm_madvise(mm, (uintptr_t)arg[0], (size_t)arg[1], (int)arg[2]);
     unlock_mm(mm);
     return ret;
+}
+
+static int
+sys_futex(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    int operation = (int)arg[1];
+    int command = operation & FUTEX_CMD_MASK;
+
+    if (mm == NULL ||
+        (operation & ~(FUTEX_CMD_MASK | FUTEX_PRIVATE_FLAG)) != 0) {
+        return -E_INVAL;
+    }
+    if (command == FUTEX_WAIT) {
+        return futex_wait(mm, (uintptr_t)arg[0], arg[2],
+                          (const struct timespec *)arg[3]);
+    }
+    if (command == FUTEX_WAKE) {
+        return futex_wake(mm, (uintptr_t)arg[0], arg[2]);
+    }
+    return -E_UNIMP;
 }
 
 static int
@@ -1495,6 +1516,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_mprotect]          sys_mprotect,
     [SYS_getrusage]         sys_getrusage,
     [SYS_madvise]           sys_madvise,
+    [SYS_futex]             sys_futex,
     [SYS_brk]               sys_brk,
     [SYS_setaffinity]       sys_setaffinity,
     [SYS_getaffinity]       sys_getaffinity,
