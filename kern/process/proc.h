@@ -53,6 +53,8 @@ struct proc_struct {
     int pid;                                    // Process ID
     int runs;                                   // the running times of Proces
     uint64_t cpu_ticks;                          // ticks charged to this task
+    uint64_t children_cpu_ticks;                  // reaped/unreaped child CPU ticks
+    uint32_t children_switches;                  // child scheduling switches
     uintptr_t kstack;                           // Process kernel stack
     volatile bool need_resched;                 // bool value: need to be rescheduled to release CPU?
     struct proc_struct *parent;                 // the parent process

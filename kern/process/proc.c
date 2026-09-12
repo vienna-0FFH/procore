@@ -114,6 +114,8 @@ alloc_proc(void) {
         proc->pid = -1;
         proc->runs = 0;
         proc->cpu_ticks = 0;
+        proc->children_cpu_ticks = 0;
+        proc->children_switches = 0;
         proc->kstack = 0;
         proc->need_resched = 0;
         proc->parent = NULL;
@@ -654,6 +656,8 @@ do_exit(int error_code) {
     current->exit_code = error_code;
     parent = current->parent;
     if (parent != NULL) {
+        parent->children_cpu_ticks += current->cpu_ticks;
+        parent->children_switches += (uint32_t)current->runs;
         /* SIGCHLD is queued while proc_lock still pins the parent in the
          * process set.  A default-ignored SIGCHLD still must wake waitpid;
          * a caught SIGCHLD also interrupts other interruptible waits. */

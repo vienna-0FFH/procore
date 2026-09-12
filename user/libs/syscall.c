@@ -279,6 +279,11 @@ sys_mprotect(void *addr, size_t len, uint32_t prot) {
 }
 
 int
+sys_getrusage(int who, struct rusage *usage) {
+    return syscall2(SYS_getrusage, who, (uintptr_t)usage);
+}
+
+int
 sys_brk(uintptr_t newbrk) {
     return syscall1(SYS_brk, newbrk);
 }

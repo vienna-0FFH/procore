@@ -20,6 +20,9 @@
 #include <sysinfo_config.h>
 #include <swap.h>
 
+static void sys_clock_ticks_to_timespec(uint64_t value,
+                                        struct timespec *store);
+
 static size_t
 sysinfo_copy_string(char *dst, size_t capacity, const char *src) {
     size_t length = strlen(src);
@@ -424,6 +427,46 @@ sys_mprotect(uint32_t arg[]) {
     ret = mm_mprotect(mm, (uintptr_t)arg[0], (size_t)arg[1], vm_flags);
     unlock_mm(mm);
     return ret;
+}
+
+static int
+sys_getrusage(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    struct rusage usage;
+    struct timespec time;
+    uint64_t cpu_ticks;
+    int who = (int)arg[0];
+
+    if (mm == NULL || arg[1] == 0 ||
+        !user_mem_check(mm, (uintptr_t)arg[1], sizeof(usage), 1)) {
+        return -E_INVAL;
+    }
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        cpu_ticks = current->cpu_ticks;
+    }
+    else if (who == RUSAGE_CHILDREN) {
+        cpu_ticks = current->children_cpu_ticks;
+    }
+    else {
+        return -E_INVAL;
+    }
+    memset(&usage, 0, sizeof(usage));
+    sys_clock_ticks_to_timespec(cpu_ticks, &time);
+    usage.ru_utime.tv_sec = time.tv_sec;
+    usage.ru_utime.tv_usec = time.tv_nsec / 1000;
+    if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
+        usage.ru_nvcsw = current->runs;
+    }
+    else {
+        usage.ru_nvcsw = (int32_t)current->children_switches;
+    }
+    lock_mm(mm);
+    if (!copy_to_user(mm, (void *)arg[1], &usage, sizeof(usage))) {
+        unlock_mm(mm);
+        return -E_INVAL;
+    }
+    unlock_mm(mm);
+    return 0;
 }
 
 static int
@@ -1426,6 +1469,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_mmap]              sys_mmap,
     [SYS_munmap]            sys_munmap,
     [SYS_mprotect]          sys_mprotect,
+    [SYS_getrusage]         sys_getrusage,
     [SYS_brk]               sys_brk,
     [SYS_setaffinity]       sys_setaffinity,
     [SYS_getaffinity]       sys_getaffinity,

@@ -43,6 +43,7 @@
         'vfstest',
         'nettest',
         'socketpairtest',
+        'rusagetest',
         'socketopttest',
         'netconnecttest',
         'tcplistentest',

@@ -84,6 +84,7 @@
 #define SYS_waitid          184
 #define SYS_mprotect        185
 #define SYS_socketpair      186
+#define SYS_getrusage       187
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -290,6 +291,32 @@ struct timespec {
 struct timeval {
     int32_t tv_sec;
     int32_t tv_usec;
+};
+#endif
+
+#define RUSAGE_SELF         0
+#define RUSAGE_THREAD       1
+#define RUSAGE_CHILDREN     (-1)
+
+#ifndef __UCORE_RUSAGE_DEFINED
+#define __UCORE_RUSAGE_DEFINED
+struct rusage {
+    struct timeval ru_utime;
+    struct timeval ru_stime;
+    int32_t ru_maxrss;
+    int32_t ru_ixrss;
+    int32_t ru_idrss;
+    int32_t ru_isrss;
+    int32_t ru_minflt;
+    int32_t ru_majflt;
+    int32_t ru_nswap;
+    int32_t ru_inblock;
+    int32_t ru_oublock;
+    int32_t ru_msgsnd;
+    int32_t ru_msgrcv;
+    int32_t ru_nsignals;
+    int32_t ru_nvcsw;
+    int32_t ru_nivcsw;
 };
 #endif
 

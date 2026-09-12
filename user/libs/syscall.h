@@ -58,6 +58,7 @@ int sys_poll(struct pollfd *fds, size_t count, int timeout_ms);
 int sys_mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);
 int sys_munmap(void *addr, size_t len);
 int sys_mprotect(void *addr, size_t len, uint32_t prot);
+int sys_getrusage(int who, struct rusage *usage);
 int sys_brk(uintptr_t newbrk);
 int sys_putc(int c);
 int sys_pgdir(void);

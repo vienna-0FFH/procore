@@ -81,6 +81,7 @@ int socketpair(int, int, int, int [2]);
 int wait4(int, int *, unsigned int);
 int waitid(int, int, siginfo_t *, unsigned int);
 int mprotect(void *, size_t, unsigned int);
+int getrusage(int, struct rusage *);
 int fchdir(int);
 int rmdir(const char *);
 int select(int, fd_set *, fd_set *, fd_set *, struct timeval *);

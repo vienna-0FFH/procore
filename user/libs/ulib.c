@@ -137,6 +137,11 @@ mprotect(void *addr, size_t len, uint32_t prot) {
     return sys_mprotect(addr, len, prot);
 }
 
+int
+getrusage(int who, struct rusage *usage) {
+    return sys_getrusage(who, usage);
+}
+
 uintptr_t
 brk(uintptr_t newbrk) {
     return (uintptr_t)sys_brk(newbrk);
