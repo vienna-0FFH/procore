@@ -34,6 +34,8 @@ int sysfile_dup(int fd1, int fd2);                              // duplicate fil
 int sysfile_pipe(int *fd_store);                                // build PIPE   
 int sysfile_pipe2(int *fd_store, uint32_t flags);
 int sysfile_socketpair(int domain, int type, int protocol, int *fd_store);
+int sysfile_symlink(const char *target, const char *link_path);
+int sysfile_readlink(const char *path, char *buffer, size_t len);
 int sysfile_mkfifo(const char *name, uint32_t open_flags);      // build named PIPE
 
 #endif /* !__KERN_FS_SYSFILE_H__ */

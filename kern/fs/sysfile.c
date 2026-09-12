@@ -636,6 +636,53 @@ sysfile_socketpair(int domain, int type, int protocol, int *fd_store) {
 }
 
 int
+sysfile_symlink(const char *target, const char *link_path) {
+    char *target_copy = NULL, *link_copy = NULL;
+    int ret;
+    if ((ret = copy_path(&target_copy, target)) != 0 ||
+        (ret = copy_path(&link_copy, link_path)) != 0) {
+        kfree(target_copy);
+        return ret;
+    }
+    ret = vfs_symlink(target_copy, link_copy);
+    kfree(target_copy);
+    kfree(link_copy);
+    return ret;
+}
+
+int
+sysfile_readlink(const char *path, char *buffer, size_t len) {
+    struct mm_struct *mm = current->mm;
+    struct iobuf iob;
+    char *path_copy, *data;
+    size_t used;
+    int ret;
+
+    if (mm == NULL || buffer == NULL || len == 0 ||
+        (ret = copy_path(&path_copy, path)) != 0) {
+        return ret != 0 ? ret : -E_INVAL;
+    }
+    data = kmalloc(len);
+    if (data == NULL) {
+        kfree(path_copy);
+        return -E_NO_MEM;
+    }
+    iobuf_init(&iob, data, len, 0);
+    ret = vfs_readlink(path_copy, &iob);
+    used = iobuf_used(&iob);
+    if (ret == 0) {
+        lock_mm(mm);
+        if (!copy_to_user(mm, buffer, data, used)) {
+            ret = -E_INVAL;
+        }
+        unlock_mm(mm);
+    }
+    kfree(data);
+    kfree(path_copy);
+    return ret == 0 ? (int)used : ret;
+}
+
+int
 sysfile_mkfifo(const char *__name, uint32_t open_flags) {
     return -E_UNIMP;
 }

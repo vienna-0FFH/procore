@@ -15,6 +15,8 @@ int lseek(int fd, off_t pos, int whence);
 int fstat(int fd, struct stat *stat);
 int stat(const char *path, struct stat *stat);
 int lstat(const char *path, struct stat *stat);
+int symlink(const char *target, const char *link_path);
+int readlink(const char *path, char *buffer, size_t len);
 int fsync(int fd);
 int ftruncate(int fd, off_t length);
 int truncate(const char *path, off_t length);

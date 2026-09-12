@@ -44,6 +44,7 @@
         'nettest',
         'socketpairtest',
         'rusagetest',
+        'symlinktest',
         'socketopttest',
         'netconnecttest',
         'tcplistentest',

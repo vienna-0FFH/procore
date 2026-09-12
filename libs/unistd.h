@@ -85,6 +85,8 @@
 #define SYS_mprotect        185
 #define SYS_socketpair      186
 #define SYS_getrusage       187
+#define SYS_symlink         188
+#define SYS_readlink        189
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100

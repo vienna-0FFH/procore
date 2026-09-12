@@ -52,6 +52,16 @@ lstat(const char *path, struct stat *stat) {
 }
 
 int
+symlink(const char *target, const char *link_path) {
+    return sys_symlink(target, link_path);
+}
+
+int
+readlink(const char *path, char *buffer, size_t len) {
+    return sys_readlink(path, buffer, len);
+}
+
+int
 fsync(int fd) {
     return sys_fsync(fd);
 }

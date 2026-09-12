@@ -15,6 +15,7 @@
 
 static const struct inode_ops sfs_node_dirops;  // dir operations
 static const struct inode_ops sfs_node_fileops; // file operations
+static inline int sfs_io(struct inode *node, struct iobuf *iob, bool write);
 
 /*
  * lock_sin - lock the process of inode Rd/Wr
@@ -41,6 +42,7 @@ sfs_get_ops(uint16_t type) {
     case SFS_TYPE_DIR:
         return &sfs_node_dirops;
     case SFS_TYPE_FILE:
+    case SFS_TYPE_LINK:
         return &sfs_node_fileops;
     }
     panic("invalid file type %d.\n", type);
@@ -910,6 +912,57 @@ sfs_unlink(struct inode *dir, const char *name) {
     up(&(sfs->mutex_sem));
     if (target != NULL) {
         vop_ref_dec(target);
+    }
+    return ret;
+}
+
+int
+sfs_symlink(struct inode *dir, const char *name, const char *target) {
+    struct sfs_fs *sfs;
+    struct sfs_inode *sdir, *slink;
+    struct inode *node = NULL;
+    struct iobuf iob;
+    size_t length;
+    int slot, ret;
+
+    if (dir == NULL || name == NULL || target == NULL || name[0] == '\0' ||
+        strlen(name) > SFS_MAX_FNAME_LEN || strchr(name, '/') != NULL ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+        !check_inode_type(dir, sfs_inode)) {
+        return -E_INVAL;
+    }
+    length = strlen(target);
+    if (length > SFS_MAX_FILE_SIZE) {
+        return -E_TOO_BIG;
+    }
+    sfs = fsop_info(vop_fs(dir), sfs);
+    sdir = vop_info(dir, sfs_inode);
+    if (sdir->din->type != SFS_TYPE_DIR) {
+        return -E_NOTDIR;
+    }
+    down(&(sfs->mutex_sem));
+    lock_sfs_fs(sfs);
+    lock_sin(sdir);
+    ret = sfs_dirent_search_nolock(sfs, sdir, name, NULL, NULL, &slot);
+    if (ret == 0) {
+        ret = -E_EXISTS;
+    }
+    else if (ret == -E_NOENT) {
+        ret = sfs_new_inode(sfs, SFS_TYPE_LINK, &node);
+        if (ret == 0) {
+            slink = vop_info(node, sfs_inode);
+            iobuf_init(&iob, (void *)target, length, 0);
+            ret = sfs_io(node, &iob, 1);
+            if (ret == 0) {
+                ret = sfs_dirent_link_nolock(sfs, sdir, slot, slink, name);
+            }
+        }
+    }
+    unlock_sin(sdir);
+    unlock_sfs_fs(sfs);
+    up(&(sfs->mutex_sem));
+    if (node != NULL) {
+        vop_ref_dec(node);
     }
     return ret;
 }

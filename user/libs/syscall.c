@@ -175,6 +175,16 @@ sys_socketpair(int domain, int type, int protocol, int fd[2]) {
 }
 
 int
+sys_symlink(const char *target, const char *link_path) {
+    return syscall2(SYS_symlink, (uintptr_t)target, (uintptr_t)link_path);
+}
+
+int
+sys_readlink(const char *path, char *buffer, size_t len) {
+    return syscall3(SYS_readlink, (uintptr_t)path, (uintptr_t)buffer, len);
+}
+
+int
 sys_bind(int fd, const struct sockaddr_in *address, size_t length) {
     return syscall3(SYS_bind, fd, (uintptr_t)address, length);
 }

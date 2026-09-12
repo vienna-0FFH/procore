@@ -238,6 +238,7 @@ The vector-I/O count is bounded by the editable `FS_IOV_MAX` policy in
 | `socket`, UDP send/receive | invalid domain/type cases plus datagram loopback | `PASS` for AF_INET/SOCK_DGRAM; TCP/raw and connected UNIX sockets remain `NOT_IMPL` | `nettest` |
 | `socketpair` | unnamed AF_UNIX stream pair, full-duplex byte flow, nonblocking read, and peer close readiness | `PASS` for the in-kernel pipe-backed SOCK_STREAM subset | `socketpairtest` |
 | `getrusage` | self/thread CPU time, cumulative child CPU time, context-switch counters, and argument validation | `PASS` for supported CPU/context counters; page-fault and I/O counters are currently zero | `rusagetest` |
+| `symlink/readlink` | create an SFS link inode, read its target bytes, and distinguish `lstat` from regular files | `PASS` for no-follow link operations; path-following `stat/open/chdir` semantics remain a separate phase | `symlinktest` |
 | `raise`, `kill`, `sigaction`, `sigprocmask`, `sigreturn` | pending delivery, handler return, masks, default actions, stop/continue, `SIGCHLD`, `SIGPIPE` | `PASS` for the first-phase process-directed ABI; realtime queues, timers, and signalfd are not implemented | signal tests |
 
 The following upstream families deliberately remain outside the current uCore

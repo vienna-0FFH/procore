@@ -25,12 +25,13 @@ enum vfs_sfs_dirop {
     VFS_SFS_UNLINK,
     VFS_SFS_LINK,
     VFS_SFS_RENAME,
+    VFS_SFS_SYMLINK,
 };
 
 static int
 vfs_sfs_dirop(struct inode *dir, enum vfs_sfs_dirop op, const char *name,
               struct inode *target, struct inode *new_dir,
-              const char *new_name) {
+              const char *new_name, const char *link_target) {
     if (!check_inode_type(dir, sfs_inode)) {
         return -E_UNIMP;
     }
@@ -46,6 +47,8 @@ vfs_sfs_dirop(struct inode *dir, enum vfs_sfs_dirop op, const char *name,
             return -E_XDEV;
         }
         return sfs_rename(dir, name, new_dir, new_name);
+    case VFS_SFS_SYMLINK:
+        return sfs_symlink(dir, name, link_target);
     default:
         return -E_UNIMP;
     }
@@ -138,7 +141,7 @@ vfs_unlink(char *path) {
         ret = -E_INVAL;
     }
     else if ((ret = vfs_require_dir(dir)) == 0) {
-        ret = vfs_sfs_dirop(dir, VFS_SFS_UNLINK, name, NULL, NULL, NULL);
+        ret = vfs_sfs_dirop(dir, VFS_SFS_UNLINK, name, NULL, NULL, NULL, NULL);
     }
     vop_ref_dec(dir);
     return ret;
@@ -191,7 +194,7 @@ vfs_rename(char *old_path, char *new_path) {
         }
         else {
             ret = vfs_sfs_dirop(old_dir, VFS_SFS_RENAME,
-                                old_name, NULL, new_dir, new_name);
+                                old_name, NULL, new_dir, new_name, NULL);
         }
     }
     vop_ref_dec(old_dir);
@@ -219,7 +222,7 @@ vfs_link(char *old_path, char *new_path) {
         ret = -E_XDEV;
     }
     else if ((ret = vfs_require_dir(new_dir)) == 0) {
-        ret = vfs_sfs_dirop(new_dir, VFS_SFS_LINK, new_name, target, NULL, NULL);
+        ret = vfs_sfs_dirop(new_dir, VFS_SFS_LINK, new_name, target, NULL, NULL, NULL);
     }
     vop_ref_dec(new_dir);
     vop_ref_dec(target);
@@ -229,13 +232,41 @@ vfs_link(char *old_path, char *new_path) {
 // unimplement
 int
 vfs_symlink(char *old_path, char *new_path) {
-    return -E_UNIMP;
+    int ret;
+    char *name;
+    struct inode *dir;
+    if (old_path == NULL || new_path == NULL ||
+        (ret = vfs_lookup_parent(new_path, &dir, &name)) != 0) {
+        return ret != 0 ? ret : -E_INVAL;
+    }
+    if (*name == '\0' || strchr(name, '/') != NULL) {
+        ret = -E_INVAL;
+    }
+    else if ((ret = vfs_require_dir(dir)) == 0) {
+        ret = vfs_sfs_dirop(dir, VFS_SFS_SYMLINK, name, NULL, NULL, NULL, old_path);
+    }
+    vop_ref_dec(dir);
+    return ret;
 }
 
 // unimplement
 int
 vfs_readlink(char *path, struct iobuf *iob) {
-    return -E_UNIMP;
+    struct inode *node;
+    uint32_t type;
+    int ret;
+    if (path == NULL || iob == NULL || (ret = vfs_lookup(path, &node)) != 0) {
+        return ret != 0 ? ret : -E_INVAL;
+    }
+    ret = vop_gettype(node, &type);
+    if (ret == 0 && !S_ISLNK(type)) {
+        ret = -E_INVAL;
+    }
+    if (ret == 0) {
+        ret = vop_read(node, iob);
+    }
+    vop_ref_dec(node);
+    return ret;
 }
 
 // unimplement
@@ -251,7 +282,7 @@ vfs_mkdir(char *path){
         ret = -E_INVAL;
     }
     else if ((ret = vfs_require_dir(dir)) == 0) {
-        ret = vfs_sfs_dirop(dir, VFS_SFS_MKDIR, name, NULL, NULL, NULL);
+        ret = vfs_sfs_dirop(dir, VFS_SFS_MKDIR, name, NULL, NULL, NULL, NULL);
     }
     vop_ref_dec(dir);
     return ret;

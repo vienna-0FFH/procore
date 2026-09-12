@@ -131,6 +131,7 @@ int sfs_load_inode(struct sfs_fs *sfs, struct inode **node_store, uint32_t ino);
 /* Namespace operations used by the VFS pathname layer. */
 int sfs_create(struct inode *dir, const char *name, bool excl,
                struct inode **node_store);
+int sfs_symlink(struct inode *dir, const char *name, const char *target);
 int sfs_mkdir(struct inode *dir, const char *name);
 int sfs_link(struct inode *dir, const char *name, struct inode *target);
 int sfs_unlink(struct inode *dir, const char *name);
