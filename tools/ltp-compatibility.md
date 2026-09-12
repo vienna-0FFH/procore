@@ -48,6 +48,7 @@ The current initial subset maps these LTP themes:
 | `clonetest` | `clone`, `gettid`, `getppid`, `getcpu` | shared address space/thread entry |
 | `mmaptest` | `mmap`, `munmap`, `brk` | anonymous mappings and heap boundary |
 | `mprotecttest` | `mprotect` | page-aligned VMA permission changes, resident PTE updates, and PROT_NONE restoration |
+| `madvisetest` | `madvise` | anonymous mapping advice validation and `MADV_DONTNEED` page reclamation |
 | `fdsharetest` | `dup`, `close`, `fork` | shared descriptions and SMP lifetime races |
 | `vfstest` | VFS namespace | mkdir, link, rename, unlink, traversal |
 | `nettest` | socket/UDP | loopback datagrams and descriptor sharing |

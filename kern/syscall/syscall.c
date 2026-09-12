@@ -470,6 +470,19 @@ sys_getrusage(uint32_t arg[]) {
 }
 
 static int
+sys_madvise(uint32_t arg[]) {
+    struct mm_struct *mm = current->mm;
+    int ret;
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    lock_mm(mm);
+    ret = mm_madvise(mm, (uintptr_t)arg[0], (size_t)arg[1], (int)arg[2]);
+    unlock_mm(mm);
+    return ret;
+}
+
+static int
 sys_brk(uint32_t arg[]) {
     struct mm_struct *mm = current->mm;
     uintptr_t oldbrk;
@@ -1481,6 +1494,7 @@ static int (*syscalls[])(uint32_t arg[]) = {
     [SYS_munmap]            sys_munmap,
     [SYS_mprotect]          sys_mprotect,
     [SYS_getrusage]         sys_getrusage,
+    [SYS_madvise]           sys_madvise,
     [SYS_brk]               sys_brk,
     [SYS_setaffinity]       sys_setaffinity,
     [SYS_getaffinity]       sys_getaffinity,

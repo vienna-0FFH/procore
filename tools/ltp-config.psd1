@@ -36,6 +36,7 @@
         'clonetest',
         'mmaptest',
         'mprotecttest',
+        'madvisetest',
         'fdsharetest',
         'pipetest',
         'polltest',

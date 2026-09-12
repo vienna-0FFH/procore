@@ -294,6 +294,11 @@ sys_getrusage(int who, struct rusage *usage) {
 }
 
 int
+sys_madvise(void *addr, size_t len, int advice) {
+    return syscall3(SYS_madvise, (uintptr_t)addr, len, advice);
+}
+
+int
 sys_brk(uintptr_t newbrk) {
     return syscall1(SYS_brk, newbrk);
 }

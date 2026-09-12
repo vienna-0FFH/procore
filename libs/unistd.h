@@ -87,6 +87,7 @@
 #define SYS_getrusage       187
 #define SYS_symlink         188
 #define SYS_readlink        189
+#define SYS_madvise         190
 #define SYS_putc            30
 #define SYS_pgdir           31
 #define SYS_open            100
@@ -153,6 +154,12 @@ typedef struct siginfo siginfo_t;
 #define MAP_ANONYMOUS       0x20
 #define MAP_ANON            MAP_ANONYMOUS
 #define MAP_FAILED          ((void *)(uintptr_t)-1)
+
+#define MADV_NORMAL         0
+#define MADV_RANDOM         1
+#define MADV_SEQUENTIAL     2
+#define MADV_WILLNEED       3
+#define MADV_DONTNEED       4
 /* User-visible page granularity; the kernel's MMU header remains canonical. */
 #define UCORE_PAGE_SIZE     4096
 

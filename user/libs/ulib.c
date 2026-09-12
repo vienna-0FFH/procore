@@ -142,6 +142,11 @@ getrusage(int who, struct rusage *usage) {
     return sys_getrusage(who, usage);
 }
 
+int
+madvise(void *addr, size_t len, int advice) {
+    return sys_madvise(addr, len, advice);
+}
+
 uintptr_t
 brk(uintptr_t newbrk) {
     return (uintptr_t)sys_brk(newbrk);

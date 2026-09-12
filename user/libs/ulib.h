@@ -55,6 +55,7 @@ void *mmap(void *addr, size_t len, uint32_t prot, uint32_t flags);
 int munmap(void *addr, size_t len);
 int mprotect(void *addr, size_t len, uint32_t prot);
 int getrusage(int who, struct rusage *usage);
+int madvise(void *addr, size_t len, int advice);
 uintptr_t brk(uintptr_t newbrk);
 void print_pgdir(void);
 int sleep(unsigned int time);

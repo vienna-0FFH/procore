@@ -483,6 +483,49 @@ mm_mprotect(struct mm_struct *mm, uintptr_t addr, size_t len,
 }
 
 int
+mm_madvise(struct mm_struct *mm, uintptr_t addr, size_t len, int advice) {
+    uintptr_t start, end, cursor;
+    list_entry_t *list, *le;
+    struct vma_struct *vma;
+
+    if (mm == NULL || addr + len < addr ||
+        (advice != MADV_NORMAL && advice != MADV_RANDOM &&
+         advice != MADV_SEQUENTIAL && advice != MADV_WILLNEED &&
+         advice != MADV_DONTNEED)) {
+        return -E_INVAL;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    start = ROUNDDOWN(addr, PGSIZE);
+    end = ROUNDUP(addr + len, PGSIZE);
+    if (end <= start || !USER_ACCESS(start, end)) {
+        return -E_INVAL;
+    }
+    list = &(mm->mmap_list);
+    cursor = start;
+    le = list_next(list);
+    while (cursor < end) {
+        while (le != list && le2vma(le, list_link)->vm_end <= cursor) {
+            le = list_next(le);
+        }
+        if (le == list) {
+            return -E_INVAL;
+        }
+        vma = le2vma(le, list_link);
+        if (vma->vm_start > cursor) {
+            return -E_INVAL;
+        }
+        cursor = vma->vm_end < end ? vma->vm_end : end;
+        le = list_next(le);
+    }
+    if (advice == MADV_DONTNEED) {
+        mm_unmap_pages(mm, start, end);
+    }
+    return 0;
+}
+
+int
 mm_brk(struct mm_struct *mm, uintptr_t newbrk) {
     uintptr_t old_end, new_end, heap_start;
     struct vma_struct *vma;
@@ -866,10 +909,15 @@ do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
     }
     
     if (*ptep == 0) { // if the phy addr isn't exist, then alloc a page & map the phy addr with logical addr
-        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL) {
+        struct Page *page = pgdir_alloc_page(mm->pgdir, addr, perm);
+        if (page == NULL) {
             cprintf("pgdir_alloc_page in do_pgfault failed\n");
             goto failed;
         }
+        /* Anonymous pages must not expose bytes left by the physical-page
+         * allocator.  This also gives MADV_DONTNEED its zero-page behavior
+         * on the first access after the old mapping is discarded. */
+        memset(page2kva(page), 0, PGSIZE);
     }
     else if (*ptep & PTE_MPROTECT) {
         /* PROT_NONE retains the physical page in a software-only PTE.  Once
